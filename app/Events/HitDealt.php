@@ -13,7 +13,20 @@ class HitDealt implements ShouldBroadcastNow
 {
     use Dispatchable, SerializesModels;
 
-    public function __construct(public User $user, public int $damage, public Boss $boss) {}
+    /**
+     * @param  User  $user  the fighter who dealt the hit
+     * @param  int  $damage  tokens dealt this turn
+     * @param  Boss  $boss  the boss after the hit landed
+     * @param  ?string  $model  raw model id that produced the turn, when known
+     * @param  ?string  $flair  flair key the model earns, or null for none
+     */
+    public function __construct(
+        public User $user,
+        public int $damage,
+        public Boss $boss,
+        public ?string $model = null,
+        public ?string $flair = null,
+    ) {}
 
     /**
      * @return array<int, Channel>
@@ -41,6 +54,8 @@ class HitDealt implements ShouldBroadcastNow
             'boss_id' => $this->boss->id,
             'boss_hp_after' => $this->boss->current_hp,
             'boss_max_hp' => $this->boss->max_hp,
+            'model' => $this->model,
+            'flair' => $this->flair,
         ];
     }
 }

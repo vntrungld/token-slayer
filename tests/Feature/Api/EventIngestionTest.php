@@ -660,3 +660,27 @@ test('leaves the stored hook version alone when a stale client omits it', functi
 
     expect($this->user->fresh()->hook_version)->toBe('6');
 });
+
+test('a Fable turn broadcasts its flair, an Opus turn does not', function () {
+    config(['game.flair_models' => ['claude-fable']]);
+    Illuminate\Support\Facades\Event::fake([HitDealt::class]);
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'tokens' => 10_572,
+            'models' => ['claude-fable-5-1' => 10_572],
+        ])->assertCreated();
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'tokens' => 4_070,
+            'models' => ['claude-opus-5' => 4_070],
+        ])->assertCreated();
+
+    Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
+        fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable');
+    Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
+        fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null);
+});

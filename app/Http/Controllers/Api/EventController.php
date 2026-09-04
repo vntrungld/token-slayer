@@ -13,6 +13,7 @@ use App\Models\Boss;
 use App\Models\Event;
 use App\Services\AccountResolver;
 use App\Services\Accounts\AccountMembershipRecorder;
+use App\Services\Battlefield\ModelFlairResolver;
 use App\Services\DamageService;
 use App\Services\Events\ModelUsageParser;
 use App\Services\Events\TurnUsage;
@@ -25,6 +26,7 @@ class EventController extends Controller
     public function __construct(
         private DamageService $damage,
         private ModelUsageParser $models,
+        private ModelFlairResolver $flair,
         private FighterChargingCache $chargingCache,
         private AccountResolver $accounts,
         private AccountMembershipRecorder $membership,
@@ -112,7 +114,7 @@ class EventController extends Controller
                     $this->dispatchSafely(new BossSpawned($result->boss));
                 }
 
-                $this->dispatchSafely(new HitDealt($user, $tokens, $result->boss));
+                $this->dispatchSafely(new HitDealt($user, $tokens, $result->boss, $model, $this->flair->resolve($model)));
 
                 if ($activityLabel !== null) {
                     // Dispatched after HitDealt: the client clears the charge
