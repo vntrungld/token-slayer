@@ -842,3 +842,51 @@ test('both installers merge the usage object without nesting tokens', function (
     'ps1' => ['/install.ps1'],
 ]);
 
+test('both installers dispatch a Codex-shaped walk for codex', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('token_count')
+        ->and($script)->toContain('last_token_usage.output_tokens')
+        ->and($script)->toContain('turn_context')
+        ->and($script)->toContain('task_started');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('the Codex walk never reads cumulative or total token fields', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // total_token_usage is cumulative for the whole session, so a turn would
+    // deal the session total. total_tokens includes input plus cached input,
+    // which for Codex is ~30x output. reasoning_output_tokens is a SUBSET of
+    // output_tokens (verified: input 13463 + output 715 = total 14178, with
+    // reasoning 503 inside the 715), so adding it double-counts.
+    expect($script)->not->toContain('total_token_usage.output_tokens')
+        ->and($script)->not->toContain('last_token_usage.total_tokens')
+        ->and($script)->not->toContain('reasoning_output_tokens');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('the rendered hook helper is syntactically valid shell', function (string $url, string $pattern) {
+    // A misplaced `fi` in the provider-dispatched extractor would break the
+    // hook for everyone with no error anywhere -- the hook is fire-and-forget
+    // and its output is discarded, so the only symptom is missing events.
+    // String assertions cannot catch that; parsing it can.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect(preg_match($pattern, $script, $matches))->toBe(1);
+
+    $path = tempnam(sys_get_temp_dir(), 'hook-syntax-');
+    file_put_contents($path, $matches[1]);
+    exec('sh -n '.escapeshellarg($path).' 2>&1', $output, $exitCode);
+    @unlink($path);
+
+    expect($exitCode)->toBe(0, implode("\n", $output));
+})->with([
+    'sh' => ['/install', "/cat > \"\\\$HELPER\" <<'HOOK_SH'\n(.*?)\nHOOK_SH/s"],
+    'ps1' => ['/install.ps1', "/\\\$hookShTemplate = @'\n(.*?)\n'@/s"],
+]);
+

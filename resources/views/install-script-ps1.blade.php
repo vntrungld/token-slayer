@@ -380,6 +380,30 @@ if [ -x "$JQ" ]; then
     # together: with the old scalar merge this object would be nested under
     # `tokens`, and the server's (int) cast on an array yields 1 with no
     # warning -- every Stop would deal 1 token of damage.
+    # Codex rollout JSONL shares no shape with a Claude transcript: no
+    # type:"assistant" entries, usage under event_msg.payload.type ==
+    # "token_count", model only in turn_context. Running the Claude walk over
+    # it returns 0, which is why Codex ingestion was silently dead from
+    # 2026-06-28. antigravity deliberately keeps the Claude walk: its shape is
+    # unverified and must not change here.
+    if [ "${PROVIDER:-}" = "codex" ]; then
+      USAGE=$("$JQ" -sr '
+        . as $a
+        | (length - 1) as $end
+        | reduce range($end; -1; -1) as $i ({t:0, k:null, stop:false};
+            if .stop then . else
+              ($a[$i]) as $e
+              | if $e.type == "event_msg" and $e.payload.type == "token_count" then
+                  .t += ($e.payload.info.last_token_usage.output_tokens // 0)
+                elif $e.type == "turn_context" then
+                  .k = (.k // $e.payload.model)
+                elif $e.type == "event_msg" and $e.payload.type == "task_started" then
+                  .stop = true
+                else . end
+            end)
+        | {tokens: .t, models: (if (.k != null and .t > 0) then {(.k): .t} else {} end)}
+      ' "$TRANSCRIPT" 2>/dev/null)
+    else
     USAGE=$("$JQ" -sr '
       . as $a
       | (length - 1) as $end
@@ -400,6 +424,7 @@ if [ -x "$JQ" ]; then
           end)
       | {tokens: .t, models: .m}
     ' "$TRANSCRIPT" 2>/dev/null)
+    fi
     case "$USAGE" in
       '{'*) BODY=$(printf '%s' "$BODY" | "$JQ" -c --argjson u "$USAGE" '. + $u' 2>/dev/null || printf '%s' "$BODY") ;;
     esac
