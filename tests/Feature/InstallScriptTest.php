@@ -817,3 +817,28 @@ it('a Codex-provider event can resolve identity via a provider-scoped active fil
         ->and($providerScopedLookup)->not->toBeFalse()
         ->and($script)->toContain('CODEX_CMD="PROVIDER=codex bash $HELPER"');
 });
+
+test('both installers accumulate a per-model token breakdown', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('.m[$k] += $tok')
+        ->and($script)->toContain('$e.message.model // $e.model');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers merge the usage object without nesting tokens', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // The jq now returns an object. Left with the old scalar merge, the body
+    // would become {"tokens":{"tokens":478,"models":{...}}}, and the server's
+    // (int) cast on an array yields 1 with no warning -- every claude-code Stop
+    // would deal 1 token of damage into the append-only ledger.
+    expect($script)->not->toContain('{tokens:$t}')
+        ->and($script)->toContain('--argjson u "$USAGE"');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+

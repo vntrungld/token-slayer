@@ -376,14 +376,21 @@ JQ="$HOME/.config/__TS_NAMESPACE__/bin/jq.exe"
 if [ -x "$JQ" ]; then
   TRANSCRIPT=$(printf '%s' "$BODY" | "$JQ" -r '.transcript_path // .transcriptPath // ""' 2>/dev/null)
   if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
-    TOKENS=$("$JQ" -sr '
+    # Emits {tokens, models}. The capture and the merge below MUST change
+    # together: with the old scalar merge this object would be nested under
+    # `tokens`, and the server's (int) cast on an array yields 1 with no
+    # warning -- every Stop would deal 1 token of damage.
+    USAGE=$("$JQ" -sr '
       . as $a
       | (length - 1) as $end
-      | reduce range($end; -1; -1) as $i ({t:0, stop:false};
+      | reduce range($end; -1; -1) as $i ({t:0, m:{}, stop:false};
           if .stop then . else
             ($a[$i]) as $e
             | if $e.type == "assistant" or $e.type == "PLANNER_RESPONSE" or $e.source == "MODEL" then
-                .t += ($e.message.usage.output_tokens // $e.usage.output_tokens // $e.usage.outputTokens // 0)
+                (($e.message.usage.output_tokens // $e.usage.output_tokens // $e.usage.outputTokens // 0)) as $tok
+                | (($e.message.model // $e.model) // null) as $k
+                | .t += $tok
+                | (if $tok > 0 and $k != null then .m[$k] += $tok else . end)
               elif ($e.type == "USER_INPUT" or $e.source == "USER_EXPLICIT") then
                 .stop = true
               elif $e.type == "user"
@@ -391,11 +398,11 @@ if [ -x "$JQ" ]; then
                 .stop = true
               else . end
           end)
-      | .t
+      | {tokens: .t, models: .m}
     ' "$TRANSCRIPT" 2>/dev/null)
-    if [ -n "${TOKENS:-}" ]; then
-      BODY=$(printf '%s' "$BODY" | "$JQ" -c --argjson t "$TOKENS" '. + {tokens:$t}' 2>/dev/null || printf '%s' "$BODY")
-    fi
+    case "$USAGE" in
+      '{'*) BODY=$(printf '%s' "$BODY" | "$JQ" -c --argjson u "$USAGE" '. + $u' 2>/dev/null || printf '%s' "$BODY") ;;
+    esac
   fi
 fi
 
