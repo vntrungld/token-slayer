@@ -1,4 +1,26 @@
 <div class="relative min-h-screen bg-slate-950 text-white">
+    @if ($hookOutdated)
+        {{-- Dismissal is namespaced by version, so dismissing hides it until a
+             NEWER version ships rather than until the next reload. This page
+             gets reloaded constantly; a banner that returns every time gets
+             muted and then ignored. localStorage throws outright in some
+             contexts, so every access is guarded. --}}
+        <div
+            x-data="{
+                show: false,
+                key: 'ts:update-dismissed:{{ $latestHookVersion }}',
+                init() { try { this.show = localStorage.getItem(this.key) !== '1'; } catch (e) { this.show = true; } },
+                dismiss() { this.show = false; try { localStorage.setItem(this.key, '1'); } catch (e) {} },
+            }"
+            x-show="show"
+            x-cloak
+            class="absolute top-0 inset-x-0 z-30 flex items-center justify-center gap-3 bg-amber-500/15 border-b border-amber-500/40 px-4 py-2 text-sm text-amber-200"
+        >
+            <span>Your hook is out of date &mdash; usage is being recorded with less detail.</span>
+            <code class="rounded bg-black/40 px-2 py-0.5 text-amber-100">token-slayer update</code>
+            <button type="button" @click="dismiss()" class="ml-2 text-amber-300/70 hover:text-amber-100" aria-label="Dismiss">&times;</button>
+        </div>
+    @endif
     <div
         id="battlefield-mount"
         data-battlefield-state="{{ json_encode([

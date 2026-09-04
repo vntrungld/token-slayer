@@ -193,3 +193,26 @@ test('battlefield state carries global damage totals across rolling windows', fu
     Livewire::test(Battlefield::class)
         ->assertSeeHtml('&quot;globalDamage&quot;:{&quot;allTime&quot;:125,&quot;monthly&quot;:100,&quot;daily&quot;:100,&quot;hourly&quot;:100}');
 });
+
+test('nudges a developer whose hook is behind', function () {
+    config(['token_slayer.hook_version' => '7']);
+    $user = User::factory()->create(['hook_version' => '6']);
+
+    Livewire::actingAs($user)->test(Battlefield::class)->assertSee('token-slayer update');
+});
+
+test('says nothing to a developer who is current', function () {
+    config(['token_slayer.hook_version' => '7']);
+    $user = User::factory()->create(['hook_version' => '7']);
+
+    Livewire::actingAs($user)->test(Battlefield::class)->assertDontSee('token-slayer update');
+});
+
+test('says nothing to someone who has never sent an event', function () {
+    // hook_version stays null until the first event lands; nagging someone
+    // before they have installed anything is noise, not a nudge.
+    config(['token_slayer.hook_version' => '7']);
+    $user = User::factory()->create(['hook_version' => null]);
+
+    Livewire::actingAs($user)->test(Battlefield::class)->assertDontSee('token-slayer update');
+});

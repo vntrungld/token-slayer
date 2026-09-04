@@ -10,6 +10,7 @@ use App\Services\BossArena;
 use App\Services\DamageTotals;
 use App\Services\FighterChargingCache;
 use App\Services\FighterPositionCache;
+use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Renderless;
@@ -145,8 +146,24 @@ class Battlefield extends Component
         return app(DamageTotals::class)->global();
     }
 
+    /**
+     * Render the battlefield, telling the view whether this developer's hook is
+     * behind the version this server ships. The same flag exists on the profile
+     * page, but almost nobody opens that; the battlefield is the page the team
+     * leaves up, so the nudge has to live here to be seen.
+     *
+     * @return View
+     */
     public function render()
     {
-        return view('livewire.battlefield');
+        $hookVersion = auth()->user()?->hook_version;
+        $latest = config('token_slayer.hook_version');
+
+        return view('livewire.battlefield', [
+            // null until the first event lands: nagging someone before they
+            // have installed anything is noise, not a nudge.
+            'hookOutdated' => $hookVersion !== null && $hookVersion !== $latest,
+            'latestHookVersion' => $latest,
+        ]);
     }
 }
