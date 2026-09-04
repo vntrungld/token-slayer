@@ -152,6 +152,8 @@
                         @include('partials.guide.task', ['task' => $task, 'topicKey' => 'custom', 'i' => $i])
                     @endforeach
 
+                    <p class="text-sm text-gray-600 mt-4 mb-2">These fields are available only inside <code>custom.sh</code>, on your own machine. <code>tool_input</code> is never sent to the server &mdash; the hook filters the payload down to usage and attribution fields after <code>custom.sh</code> runs, so you can read anything locally and only the label you build leaves the machine.</p>
+
                     <div class="overflow-x-auto mt-4">
                         <table class="w-full text-left text-sm">
                             <thead class="text-xs text-gray-500 uppercase">

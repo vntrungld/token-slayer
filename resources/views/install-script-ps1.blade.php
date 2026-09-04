@@ -687,6 +687,24 @@ CUSTOM_SH="$HOME/.config/__TS_NAMESPACE__/custom.sh"
 # their own private accounts here (exit 0 before POST) so those events never
 # leave the machine. Not active yet -- default is track everything.
 
+# The server reads exactly these eleven fields. Everything else the hook
+# receives on stdin -- the prompt, tool_input, tool_response, the last
+# assistant message, cwd, permission_mode, transcript_path -- would cross the
+# network and be discarded unread, so it is not sent at all. This is
+# unconditional, not opt-in: content leaving the machine should not depend on
+# a developer knowing to set an env var.
+#
+# It runs AFTER custom.sh, which shares this shell and therefore still sees the
+# full body: the documented custom_activity recipes that read tool_input keep
+# working, and only the resulting label leaves the machine.
+if [ -x "$JQ" ]; then
+  FILTERED=$(printf '%s' "$BODY" | "$JQ" -c '{
+    hook_event_name, session_id, tokens, models, tool_name, custom_activity,
+    client_version, account_email, account_uuid, account_source, account_org_id
+  } | with_entries(select(.value != null))' 2>/dev/null)
+  case "$FILTERED" in '{'*) BODY="$FILTERED" ;; esac
+fi
+
 # The body goes over stdin, never as an argv argument: Git Bash hands argv to
 # the native curl.exe through a Win32 codepage conversion that mangles every
 # non-ASCII byte, and the server then drops the event with "Malformed UTF-8".

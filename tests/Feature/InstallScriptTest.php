@@ -175,25 +175,28 @@ it('sources the user custom.sh before sending', function () {
     expect($customShPosition)->toBeLessThan($sendPosition);
 });
 
-it('filters the payload to usage fields when SLAYER_MINIMAL_PAYLOAD is set, after custom.sh and before sending', function () {
+it('filters the payload to usage fields unconditionally, after custom.sh and before sending', function () {
+    // The ordering is the load-bearing part: the filter runs AFTER custom.sh,
+    // so a custom.sh following the guide's documented tool_input recipes still
+    // sees the full body and only its resulting label leaves the machine.
     $script = $this->get(route('install-script'))->content();
 
     expect($script)
-        ->toContain('if [ "${SLAYER_MINIMAL_PAYLOAD:-}" = "1" ] && [ -x "$JQ" ]; then')
+        ->toContain('FILTERED=$(printf \'%s\' "$BODY" | "$JQ" -c \'{')
         ->toContain('case "$FILTERED" in \'{\'*) BODY="$FILTERED" ;; esac');
 
     $customShPosition = strpos($script, '[ -r "$CUSTOM_SH" ] && . "$CUSTOM_SH"');
-    $filterPosition = strpos($script, 'if [ "${SLAYER_MINIMAL_PAYLOAD:-}" = "1" ] && [ -x "$JQ" ]');
+    $filterPosition = strpos($script, 'FILTERED=$(');
     $sendPosition = strpos($script, 'curl -s --max-time 3 -X POST "$URL"');
 
     expect($customShPosition)->toBeLessThan($filterPosition);
     expect($filterPosition)->toBeLessThan($sendPosition);
 });
 
-it('keeps only usage and attribution fields in the minimal payload allowlist', function () {
+it('keeps only usage and attribution fields in the payload allowlist', function () {
     $script = $this->get(route('install-script'))->content();
 
-    foreach (['hook_event_name', 'session_id', 'tokens', 'tool_name', 'custom_activity', 'client_version', 'account_email', 'account_uuid', 'account_source', 'account_org_id'] as $kept) {
+    foreach (['hook_event_name', 'session_id', 'tokens', 'models', 'tool_name', 'custom_activity', 'client_version', 'account_email', 'account_uuid', 'account_source', 'account_org_id'] as $kept) {
         expect($script)->toContain($kept);
     }
 });
@@ -790,13 +793,12 @@ it('guards jq calls with -x (executable check), not the always-true -n', functio
     // is executable -- it provided none of the "defensive against a manually
     // deleted binary" protection it was meant to. `-x` actually tests existence
     // + executability. Three guards: transcript-enrichment, post-resolve_account
-    // body-merge, and the minimal-payload guard's `-x "$JQ"` half of the `&&`.
+    // body-merge, and the now-unconditional payload filter.
     $script = $this->get(route('install-script'))->content();
 
     expect($script)
         ->not->toContain('[ -n "$JQ" ]')
-        ->toContain('[ -x "$JQ" ]; then')
-        ->toContain('[ "${SLAYER_MINIMAL_PAYLOAD:-}" = "1" ] && [ -x "$JQ" ]; then');
+        ->toContain('[ -x "$JQ" ]; then');
 
     expect(substr_count($script, '-x "$JQ"'))->toBe(3);
 });
@@ -888,5 +890,38 @@ test('the rendered hook helper is syntactically valid shell', function (string $
 })->with([
     'sh' => ['/install', "/cat > \"\\\$HELPER\" <<'HOOK_SH'\n(.*?)\nHOOK_SH/s"],
     'ps1' => ['/install.ps1', "/\\\$hookShTemplate = @'\n(.*?)\n'@/s"],
+]);
+
+test('the payload filter is unconditional, not opt-in', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->not->toContain('SLAYER_MINIMAL_PAYLOAD');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers whitelist exactly the eleven allowed fields', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // Assert against the whitelist BLOCK, not the whole script: several of
+    // these names also appear in the account-enrichment merge, so a
+    // whole-script toContain would pass even with the block missing entirely.
+    // That matters most for ps1, which has no such block today and must gain
+    // one -- otherwise Windows clients ship unfiltered with a green suite.
+    $start = strpos($script, 'FILTERED=$(');
+    expect($start)->not->toBeFalse();
+    $block = substr($script, $start, 400);
+
+    foreach ([
+        'hook_event_name', 'session_id', 'tokens', 'models', 'tool_name',
+        'custom_activity', 'client_version', 'account_email', 'account_uuid',
+        'account_source', 'account_org_id',
+    ] as $field) {
+        expect($block)->toContain($field);
+    }
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
 ]);
 
