@@ -787,10 +787,13 @@ import json, os, sys
 
 path = sys.argv[1]
 cmd = os.environ["CLAUDE_CMD"]
-events = [
-    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-    "Stop", "SubagentStop", "SessionEnd", "Notification",
-]
+# Only the events EventController actually handles. PostToolUse, SubagentStop,
+# SessionEnd and Notification fell through to a bare 201 -- and PostToolUse is
+# both the highest-frequency event (one per tool call) and the one carrying
+# tool_response, so not registering it stops that content at the source.
+# Liveness is unaffected: PreToolUse fires immediately before every PostToolUse,
+# with UserPromptSubmit and Stop bracketing the turn.
+events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]
 
 try:
     with open(path) as f:
@@ -810,11 +813,22 @@ except (ValueError, OSError):
 
 data.setdefault("hooks", {})
 fingerprint = os.environ["HOOK_FINGERPRINT"]  # substring match filters out our own stale entries
+
+# Strip our own entries from EVERY event, not just the ones about to be
+# re-added. Shrinking the event list otherwise leaves stale registrations (e.g.
+# PostToolUse) in place, still firing the old hook, with no error anywhere.
+for event in list(data["hooks"].keys()):
+    kept = [e for e in data["hooks"].get(event, [])
+            if fingerprint not in json.dumps(e)]
+    if kept:
+        data["hooks"][event] = kept
+    else:
+        del data["hooks"][event]
+
 for event in events:
-    entries = [e for e in data["hooks"].get(event, [])
-               if fingerprint not in json.dumps(e)]
-    entries.append({"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]})
-    data["hooks"][event] = entries
+    data["hooks"].setdefault(event, []).append(
+        {"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]}
+    )
 
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
@@ -971,8 +985,11 @@ if not isinstance(ns_data, dict):
 for event in ["SessionStart", "PreInvocation", "Stop"]:
     ns_data[event] = [{"type": "command", "command": cmd}]
 
-# Events with matchers (tool hooks)
-for event in ["PreToolUse", "PostToolUse"]:
+# Events with matchers (tool hooks). PostToolUse is deliberately absent -- the
+# server does nothing with it and it carries tool_response -- and any previously
+# registered one is removed rather than left behind.
+ns_data.pop("PostToolUse", None)
+for event in ["PreToolUse"]:
     ns_data[event] = [{
         "matcher": "*",
         "hooks": [{"type": "command", "command": cmd}]

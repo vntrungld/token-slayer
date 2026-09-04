@@ -34,20 +34,20 @@ test('install.sh drops a hook helper script that enriches Stop events with trans
         ->toContain('CODEX_CMD="PROVIDER=codex bash $HELPER"');
 });
 
-test('install.sh covers every claude code hook event', function () {
+test('install.sh registers the claude code hook events the server handles', function () {
+    // A bare toContain($event) is not enough: these names also appear in
+    // comments and in the line that REMOVES a stale registration, so such a
+    // test stays green while registering nothing. Assert the list itself.
     $script = $this->get('/install')->getContent();
 
-    foreach (['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop', 'SessionEnd', 'Notification'] as $event) {
-        expect($script)->toContain($event);
-    }
+    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]');
 });
 
-test('install.sh covers every antigravity CLI hook event', function () {
+test('install.sh registers the antigravity CLI hook events the server handles', function () {
     $script = $this->get('/install')->getContent();
 
-    foreach (['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop'] as $event) {
-        expect($script)->toContain($event);
-    }
+    expect($script)->toContain('for event in ["SessionStart", "PreInvocation", "Stop"]:')
+        ->and($script)->toContain('for event in ["PreToolUse"]:');
 });
 
 test('install.sh writes to claude settings, codex hooks, and antigravity hooks, and heals legacy codex config.toml with idempotent markers', function () {
@@ -924,4 +924,39 @@ test('both installers whitelist exactly the eleven allowed fields', function (st
     'sh' => ['/install'],
     'ps1' => ['/install.ps1'],
 ]);
+
+test('only the four handled hook events are registered', function (string $url) {
+    // EventController handles session-start, user-prompt-submit/pre-invocation,
+    // pre-tool-use and stop. PostToolUse, SubagentStop, SessionEnd and
+    // Notification fell through to a bare 201 -- and PostToolUse is both the
+    // highest-frequency event and the one carrying tool_response, so not
+    // registering it stops that content at the source rather than filtering it.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // Assert on the registration list itself. A bare not->toContain of a name
+    // would also match the line that REMOVES a stale registration.
+    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]')
+        ->and($script)->not->toContain('"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"')
+        ->and($script)->not->toContain('"Stop", "SubagentStop", "SessionEnd", "Notification"')
+        ->and($script)->not->toContain('for event in ["PreToolUse", "PostToolUse"]:');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('stale registrations are stripped from every event, not just the kept ones', function (string $url) {
+    // The loop only ever cleaned events still in its own list. Shrinking the
+    // list would therefore leave the old PostToolUse entry in settings.json,
+    // still firing the old hook -- the change would appear to work while doing
+    // nothing, with no error anywhere.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('for event in list(data["hooks"].keys()):');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the Antigravity registration drops PostToolUse too', function (string $url) {
+    // Otherwise Antigravity clients keep firing the hook on PostToolUse and
+    // keep shipping tool_response, making the payload claim false for them.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('ns_data.pop("PostToolUse", None)')
+        ->and($script)->toContain('for event in ["PreToolUse"]:');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
 
