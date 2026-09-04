@@ -171,7 +171,7 @@ it('sources the user custom.sh before sending', function () {
         ->toContain('[ -r "$CUSTOM_SH" ] && . "$CUSTOM_SH"');
 
     $customShPosition = strpos($script, 'CUSTOM_SH="$HOME/.config/token_slayer/custom.sh"');
-    $sendPosition = strpos($script, 'curl -s --max-time 3 -X POST "$URL"');
+    $sendPosition = strpos($script, 'curl -sf --max-time 3 -X POST "$URL"');
 
     expect($customShPosition)->toBeLessThan($sendPosition);
 });
@@ -188,7 +188,7 @@ it('filters the payload to usage fields unconditionally, after custom.sh and bef
 
     $customShPosition = strpos($script, '[ -r "$CUSTOM_SH" ] && . "$CUSTOM_SH"');
     $filterPosition = strpos($script, 'FILTERED=$(');
-    $sendPosition = strpos($script, 'curl -s --max-time 3 -X POST "$URL"');
+    $sendPosition = strpos($script, 'curl -sf --max-time 3 -X POST "$URL"');
 
     expect($customShPosition)->toBeLessThan($filterPosition);
     expect($filterPosition)->toBeLessThan($sendPosition);
@@ -211,7 +211,7 @@ it('pipes the event body into curl over stdin instead of passing it as an argv a
     $script = $this->get(route('install-script'))->content();
 
     expect($script)
-        ->toContain('printf \'%s\' "$BODY" | curl -s --max-time 3 -X POST "$URL"')
+        ->toContain('printf \'%s\' "$BODY" | curl -sf --max-time 3 -X POST "$URL"')
         ->toContain('--data-binary @-')
         ->not->toContain('-d "$BODY"');
 });
@@ -486,7 +486,7 @@ it('reserves the exclude-check hook point between attribution and the POST', fun
 
     $marker = strpos($script, 'exclude-check hook point (Phase 3)');
     expect($marker)->toBeGreaterThan(strpos($script, 'resolve_account'));
-    expect($marker)->toBeLessThan(strpos($script, 'curl -s --max-time 3 -X POST'));
+    expect($marker)->toBeLessThan(strpos($script, 'curl -sf --max-time 3 -X POST'));
 });
 
 it('sets up a python venv and installs slayer-cli, with a shim that execs the venv module', function () {
@@ -1028,5 +1028,46 @@ test('both installers replace merged JSON config atomically', function (string $
 
     expect($script)->toContain('os.replace(tmp, path)')
         ->and($script)->not->toContain('with open(path, "w") as f:');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the hook stores the update signal from the response it already receives', function (string $url) {
+    // The POST was fire-and-forget into /dev/null; capturing the body it
+    // already gets is what removes the need for a second endpoint entirely.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('update-state')
+        ->and($script)->toContain('curl -sf --max-time 3');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('a failed request never truncates the stored update signal', function (string $url) {
+    // A plain redirect into update-state opens and truncates it the instant
+    // the subshell starts -- before curl has even connected. A DNS failure or
+    // a 3s timeout would then leave an empty file gating unattended execution.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('.update-state.$$.tmp')
+        ->and($script)->toContain('mv -f "$NS_DIR/.update-state.$$.tmp"');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the hook delegates updating to the CLI rather than reimplementing it', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('update --if-newer')
+        ->and($script)->toContain('SLAYER_NO_AUTO_UPDATE')
+        // The Windows installer writes .cmd shims and the hook runs under Git
+        // Bash there, so checking only the extension-less name would make
+        // auto-update silently never fire on Windows.
+        ->and($script)->toContain('token-slayer.cmd')
+        // Locking lives in the CLI: flock(1) exists on neither macOS nor Git Bash.
+        ->and($script)->not->toContain('flock');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the installer verifies the wheel before pip installs it', function (string $url) {
+    // Verifying the script but not the wheel would leave code executing in the
+    // developer's venv with no integrity check at all.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('SLAYER_EXPECTED_WHEEL_SHA')
+        ->and($script)->toContain('wheel checksum mismatch');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
 

@@ -164,7 +164,7 @@ it('pipes the event body into curl over stdin in the bundled hook, not as an arg
     $script = $this->get(route('install-script-ps1'))->content();
 
     expect($script)
-        ->toContain('printf \'%s\' "$BODY" | curl -s --max-time 3 -X POST "$URL"')
+        ->toContain('printf \'%s\' "$BODY" | curl -sf --max-time 3 -X POST "$URL"')
         ->toContain('--data-binary @-')
         ->not->toContain('-d "$BODY"');
 });

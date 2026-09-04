@@ -513,10 +513,38 @@ fi
 # mangles every non-ASCII byte, and the server then drops the event with
 # "Malformed UTF-8". A single argument is also length-capped (~32 KB on
 # Windows, 128 KB per arg on Linux) while a long assistant message is not.
-printf '%s' "$BODY" | curl -s --max-time 3 -X POST "$URL" \
-  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
-  -H 'Content-Type: application/json' \
-  --data-binary @- >/dev/null 2>&1 &
+# The response used to be discarded. It carries the version the server wants
+# clients on, the sha256 of the artifacts, and a fleet-wide pause flag -- so it
+# is captured here instead, which is why no second endpoint is needed.
+#
+# -f so a non-2xx body is never stored; a PID-unique temp name so concurrent
+# hooks cannot interleave; mv so a DNS failure or a 3s timeout leaves the
+# PREVIOUS signal intact rather than truncating it to nothing.
+( printf '%s' "$BODY" | curl -sf --max-time 3 -X POST "$URL" \
+    -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- -o "$NS_DIR/.update-state.$$.tmp" \
+  && chmod 600 "$NS_DIR/.update-state.$$.tmp" \
+  && mv -f "$NS_DIR/.update-state.$$.tmp" "$NS_DIR/update-state" \
+  || rm -f "$NS_DIR/.update-state.$$.tmp" ) >/dev/null 2>&1 &
+
+# Bring the client up to date, but only ever from SessionStart and only when
+# the developer has not opted out. Everything that decides WHETHER to update --
+# reading the signal above, honouring `paused`, verifying the sha256, locking --
+# lives in the CLI, in a language with real primitives for it. The hook stays a
+# thin, fast bash script that cannot block a session.
+if [ "$(printf '%s' "$BODY" | "$JQ" -r '.hook_event_name // ""' 2>/dev/null)" = "SessionStart" ] \
+   && [ -z "${SLAYER_NO_AUTO_UPDATE:-}" ]; then
+  # The Windows installer writes .cmd shims into the same directory, and this
+  # hook runs under Git Bash there -- checking only the extension-less name
+  # would make auto-update silently never fire on Windows.
+  for _tsl in "$HOME/.local/bin/token-slayer" "$HOME/.local/bin/token-slayer.cmd"; do
+    if [ -x "$_tsl" ] || [ -f "$_tsl" ]; then
+      ( "$_tsl" update --if-newer ) >/dev/null 2>&1 &
+      break
+    fi
+  done
+fi
 HOOK_SH
 chmod +x "$HELPER.tmp"
 mv -f "$HELPER.tmp" "$HELPER"
@@ -649,6 +677,19 @@ if [ "$SLAYER_HTTP" = "200" ]; then
   # unlike an unrecognized env var, which old pip just ignores.
   # PIP_BREAK_SYSTEM_PACKAGES=1 (exported above) already covers the bypass for
   # pip versions that understand it, so it alone is enough here.
+  # Verify the wheel before installing it, when the caller supplied the digest
+  # the server published. Without this the wheel would be the one artifact in
+  # the chain executing with no integrity check at all -- the install script
+  # itself is already verified by `token-slayer update`, and jq has been
+  # checksum-pinned for the same reason since long before this.
+  if [ -n "${SLAYER_EXPECTED_WHEEL_SHA:-}" ]; then
+    SLAYER_WHL_SHA=$(sha256 < "$SLAYER_WHL")
+    if [ "$SLAYER_WHL_SHA" != "$SLAYER_EXPECTED_WHEEL_SHA" ]; then
+      echo "error: wheel checksum mismatch -- expected $SLAYER_EXPECTED_WHEEL_SHA, got $SLAYER_WHL_SHA. Refusing to install it." >&2
+      exit 1
+    fi
+  fi
+
   if SLAYER_PIP_ERR=$("$SLAYER_PIP" install --quiet "$SLAYER_WHL" 2>&1) \
       && SLAYER_PIP_ERR=$("$SLAYER_PIP" install --quiet --force-reinstall --no-deps "$SLAYER_WHL" 2>&1); then
     :

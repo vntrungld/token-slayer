@@ -235,6 +235,16 @@ if ($slayerHttp -eq 200) {
   # exit code is checked explicitly -- a native exe's non-zero exit is NOT a
   # terminating error under $ErrorActionPreference='Stop' the way a cmdlet's
   # is, so a failed install would otherwise be silently ignored.
+  # Verify the wheel before installing it, when the caller supplied the digest
+  # the server published. Without this the wheel would be the one artifact in
+  # the chain executing with no integrity check at all.
+  if ($env:SLAYER_EXPECTED_WHEEL_SHA) {
+    $whlSha = (Get-FileHash -Algorithm SHA256 -Path $whl).Hash.ToLower()
+    if ($whlSha -ne $env:SLAYER_EXPECTED_WHEEL_SHA.ToLower()) {
+      throw "wheel checksum mismatch -- expected $($env:SLAYER_EXPECTED_WHEEL_SHA), got $whlSha. Refusing to install it."
+    }
+  }
+
   & $VenvPy -m pip install --quiet $whl
   if ($LASTEXITCODE -ne 0) { throw 'slayer-cli: wheel install failed -- see the error above.' }
   & $VenvPy -m pip install --quiet --force-reinstall --no-deps $whl
@@ -714,10 +724,38 @@ fi
 # non-ASCII byte, and the server then drops the event with "Malformed UTF-8".
 # A single argument is also capped near 32 KB, well under a long assistant
 # message.
-printf '%s' "$BODY" | curl -s --max-time 3 -X POST "$URL" \
-  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
-  -H 'Content-Type: application/json' \
-  --data-binary @- >/dev/null 2>&1 &
+# The response used to be discarded. It carries the version the server wants
+# clients on, the sha256 of the artifacts, and a fleet-wide pause flag -- so it
+# is captured here instead, which is why no second endpoint is needed.
+#
+# -f so a non-2xx body is never stored; a PID-unique temp name so concurrent
+# hooks cannot interleave; mv so a DNS failure or a 3s timeout leaves the
+# PREVIOUS signal intact rather than truncating it to nothing.
+( printf '%s' "$BODY" | curl -sf --max-time 3 -X POST "$URL" \
+    -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- -o "$NS_DIR/.update-state.$$.tmp" \
+  && chmod 600 "$NS_DIR/.update-state.$$.tmp" \
+  && mv -f "$NS_DIR/.update-state.$$.tmp" "$NS_DIR/update-state" \
+  || rm -f "$NS_DIR/.update-state.$$.tmp" ) >/dev/null 2>&1 &
+
+# Bring the client up to date, but only ever from SessionStart and only when
+# the developer has not opted out. Everything that decides WHETHER to update --
+# reading the signal above, honouring `paused`, verifying the sha256, locking --
+# lives in the CLI, in a language with real primitives for it. The hook stays a
+# thin, fast bash script that cannot block a session.
+if [ "$(printf '%s' "$BODY" | "$JQ" -r '.hook_event_name // ""' 2>/dev/null)" = "SessionStart" ] \
+   && [ -z "${SLAYER_NO_AUTO_UPDATE:-}" ]; then
+  # The Windows installer writes .cmd shims into the same directory, and this
+  # hook runs under Git Bash there -- checking only the extension-less name
+  # would make auto-update silently never fire on Windows.
+  for _tsl in "$HOME/.local/bin/token-slayer" "$HOME/.local/bin/token-slayer.cmd"; do
+    if [ -x "$_tsl" ] || [ -f "$_tsl" ]; then
+      ( "$_tsl" update --if-newer ) >/dev/null 2>&1 &
+      break
+    fi
+  done
+fi
 '@
 $hookSh = $hookShTemplate.Replace('__TS_BASE_URL__', $BaseUrl).Replace('__TS_NAMESPACE__', $Ns).Replace('__TS_CLIENT_VERSION__', $ClientVersion).Replace('__TS_HOOK_VERSION__', $HookVersion)
 # LF line endings (not CRLF) -- this file is executed by bash.
