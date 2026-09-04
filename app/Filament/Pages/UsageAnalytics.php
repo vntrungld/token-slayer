@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Filament\Widgets\ActivityHeatmap;
 use App\Filament\Widgets\FleetQuotaOverview;
+use App\Filament\Widgets\TokensByModelChart;
 use App\Filament\Widgets\TokenVolumeChart;
 use App\Filament\Widgets\TopAccountsLeaderboard;
 use App\Filament\Widgets\TopUsersLeaderboard;
@@ -136,6 +137,7 @@ class UsageAnalytics extends Page
             ActivityHeatmap::class,
             FleetQuotaOverview::class,
             TokenVolumeChart::class,
+            TokensByModelChart::class,
             TopUsersLeaderboard::class,
             TopAccountsLeaderboard::class,
         ];
