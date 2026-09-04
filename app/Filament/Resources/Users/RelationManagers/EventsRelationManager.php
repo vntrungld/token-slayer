@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Users\RelationManagers;
 
+use App\Enums\ModelFamily;
 use App\Filament\Resources\Users\Pages\ViewUser;
 use App\Models\Event;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -58,6 +59,35 @@ class EventsRelationManager extends RelationManager
     }
 
     /**
+     * Badge text for an event's model. A known family shows its label; a model
+     * the enum does not know yet shows its raw id verbatim, so a newly released
+     * model stays visible rather than collapsing into an "other" bucket; an
+     * event from a client that predates model tracking shows a dash.
+     *
+     * @param  Event  $record  the event row being rendered
+     * @return string
+     */
+    public static function modelLabel(Event $record): string
+    {
+        if ($record->model === null) {
+            return '—';
+        }
+
+        return ModelFamily::fromModelId($record->model)?->getLabel() ?? $record->model;
+    }
+
+    /**
+     * Badge colour for an event's model, grey for anything with no known family.
+     *
+     * @param  Event  $record  the event row being rendered
+     * @return string
+     */
+    public static function modelColor(Event $record): string
+    {
+        return ModelFamily::fromModelId($record->model)?->getColor() ?? 'gray';
+    }
+
+    /**
      * Build the read-only events table, newest first.
      *
      * @param  Table  $table  The table being configured by Filament.
@@ -82,6 +112,11 @@ class EventsRelationManager extends RelationManager
                 TextColumn::make('tokens')
                     ->numeric()
                     ->sortable(),
+                TextColumn::make('model')
+                    ->label('Model')
+                    ->badge()
+                    ->state(fn (Event $record): string => self::modelLabel($record))
+                    ->color(fn (Event $record): string => self::modelColor($record)),
                 TextColumn::make('session_id')
                     ->label('Session')
                     ->limit(12)
