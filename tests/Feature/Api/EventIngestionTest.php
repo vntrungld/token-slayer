@@ -14,6 +14,7 @@ use App\Services\FighterChargingCache;
 use App\Services\TranscriptReader;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 uses(RefreshDatabase::class);
 
@@ -575,4 +576,15 @@ it('attributes a detector-sourced stop event by account email', function () {
     expect($event->account_id)->toBe($account->id);
     expect($event->account_source)->toBe('detector');
     expect($event->account_email)->toBe('detected@ownego.com');
+});
+
+test('events table has a nullable model column', function () {
+    expect(Schema::hasColumn('events', 'model'))->toBeTrue();
+
+    // events.user_id is NOT NULL (foreignId()->constrained()), and EventFactory
+    // supplies only provider/tokens/session_id — omitting the user would fail
+    // on the constraint rather than on the missing column.
+    $event = Event::factory()->create(['user_id' => $this->user->id, 'model' => null]);
+
+    expect($event->fresh()->model)->toBeNull();
 });
