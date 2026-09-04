@@ -7,6 +7,7 @@ import { planRoute } from '@battlefield/move-geometry.js';
 import { resolveFighterPlacement } from '@battlefield/fighter-placement.js';
 import { driftedPositions } from '@battlefield/resync.js';
 import { loadAvatarTexture, makeFallbackAvatarTexture } from './avatar.js';
+import { clearFlair, createFlairState, isFlairActive, startFlair } from './flair.js';
 
 // Tiny RPG sprite geometry constants — do not change without re-measuring the atlas.
 const SPRITE_CHAR_HEIGHT = 18;
@@ -448,12 +449,80 @@ export class Fighter {
    * @param {number|string} userId
    * @return {void}
    */
+  /**
+   * Shows or refreshes a fighter's flair badge for this hit.
+   *
+   * @param {object} fighter
+   * @param {?string} flair
+   * @return {void}
+   */
+  applyFlair(fighter, flair) {
+    const now = this.scene.time.now;
+    fighter.flairState = startFlair(fighter.flairState ?? createFlairState(), flair, now, TIMINGS.flairDurationMs);
+
+    if (!isFlairActive(fighter.flairState, now)) {
+      return;
+    }
+
+    if (!fighter.flairBadge?.scene) {
+      // A child of the fighter container, so it inherits movement and the
+      // damage rest-scale for free. `entry.handle` is world-space and is null
+      // whenever handles are hidden, which would leave the badge unanchored.
+      const head = fighter.head;
+      const y = (head?.y ?? 0) - (head?.displayHeight ?? 28) / 2 - 10;
+      fighter.flairBadge = this.scene.add.text(0, y, fighter.flairState.flair.toUpperCase(), {
+        fontFamily: 'monospace', fontSize: '10px', color: '#fbbf24',
+        backgroundColor: '#00000099', padding: { x: 4, y: 1 },
+      }).setOrigin(0.5, 1);
+      fighter.sprite?.add?.(fighter.flairBadge);
+    }
+
+    fighter.flairBadge.setText(fighter.flairState.flair.toUpperCase()).setAlpha(1);
+    this.scene.tweens.killTweensOf(fighter.flairBadge);
+    fighter.flairBlink = this.scene.tweens.add({
+      targets: fighter.flairBadge,
+      alpha: 0.15,
+      duration: TIMINGS.flairBlinkMs,
+      yoyo: true,
+      repeat: -1,
+    });
+
+    if (fighter.flairTimer) {
+      fighter.flairTimer.remove();
+    }
+    fighter.flairTimer = this.scene.time.delayedCall(TIMINGS.flairDurationMs, () => this.destroyFlair(fighter));
+  }
+
+  /**
+   * Removes a fighter's flair badge, its blink tween and its expiry timer.
+   * Called both when the badge expires and when the fighter leaves, so no
+   * tween or delayedCall outlives the object it targets.
+   *
+   * @param {object} fighter
+   * @return {void}
+   */
+  destroyFlair(fighter) {
+    if (!fighter) {
+      return;
+    }
+    fighter.flairTimer?.remove?.();
+    fighter.flairTimer = null;
+    if (fighter.flairBadge) {
+      this.scene.tweens.killTweensOf(fighter.flairBadge);
+      if (fighter.flairBadge.scene) fighter.flairBadge.destroy();
+      fighter.flairBadge = null;
+    }
+    fighter.flairBlink = null;
+    fighter.flairState = clearFlair();
+  }
+
   removeFighter(userId) {
     const entry = this.scene.fighters.get(userId);
     if (!entry) {
       return;
     }
     this.scene.fighters.delete(userId);
+    this.destroyFlair(entry);
     this.scene.tweens.add({
       targets: entry.sprite,
       alpha: 0,
@@ -627,6 +696,7 @@ export class Fighter {
     this.scene.charge?.clearCharge?.(payload.user_id);
     const fighter = this.scene.fighters.get(payload.user_id);
     if (fighter) {
+      this.applyFlair(fighter, payload.flair ?? null);
       this.scene.tweens.killTweensOf(fighter.sprite);
       if (fighter.handle) this.scene.tweens.killTweensOf(fighter.handle);
       fighter.pos = { x: fighter.sprite.x, y: fighter.sprite.y };
