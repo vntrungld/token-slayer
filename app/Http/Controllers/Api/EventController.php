@@ -14,8 +14,9 @@ use App\Models\Event;
 use App\Services\AccountResolver;
 use App\Services\Accounts\AccountMembershipRecorder;
 use App\Services\DamageService;
+use App\Services\Events\ModelUsageParser;
+use App\Services\Events\TurnUsage;
 use App\Services\FighterChargingCache;
-use App\Services\TranscriptReader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -23,7 +24,7 @@ class EventController extends Controller
 {
     public function __construct(
         private DamageService $damage,
-        private TranscriptReader $transcripts,
+        private ModelUsageParser $models,
         private FighterChargingCache $chargingCache,
         private AccountResolver $accounts,
         private AccountMembershipRecorder $membership,
@@ -44,7 +45,9 @@ class EventController extends Controller
 
         $hookName = $payload['hook_event_name'] ?? 'unknown';
         $eventType = $this->normalizeEventType($hookName);
-        $tokens = $this->resolveStopTokens($eventType, $payload);
+        $usage = $this->resolveStopUsage($eventType, $payload);
+        $tokens = $usage?->tokens ?? 0;
+        $model = $usage !== null ? $this->models->primaryModel($usage->modelTokens) : null;
 
         $user->forceFill([
             'last_event_at' => now(),
@@ -80,6 +83,7 @@ class EventController extends Controller
                     'user_id' => $user->id,
                     'boss_id' => $boss?->id,
                     'provider' => $provider,
+                    'model' => $model,
                     'tokens' => $tokens,
                     'session_id' => $payload['session_id'] ?? null,
                     'account_id' => $accountId,
@@ -203,43 +207,23 @@ class EventController extends Controller
     }
 
     /**
-     * Resolve the damage tokens for a Stop event. Inline payload wins so
-     * cross-machine deployments can extract tokens client-side; otherwise
-     * fall back to reading the transcript when the hook host is the same
-     * machine as the server. Non-Stop events return null.
+     * Resolve a Stop event's usage from its payload. The hook computes both the
+     * token total and the per-model split on the machine that owns the
+     * transcript, so the server never opens a file and needs no retry loop —
+     * the old server-side fallback only ever ran when the hook host and the
+     * server were the same machine, and `transcript_path` is no longer sent.
      *
-     * @param  array<string, mixed>  $payload
+     * @param  string  $eventType  the normalized hook event name
+     * @param  array<string, mixed>  $payload  the raw hook payload
+     * @return ?TurnUsage null for anything that is not a Stop event
      */
-    private function resolveStopTokens(string $eventType, array $payload): ?int
+    private function resolveStopUsage(string $eventType, array $payload): ?TurnUsage
     {
         if ($eventType !== 'stop') {
             return null;
         }
 
-        $inline = (int) ($payload['tokens'] ?? 0);
-        if ($inline > 0) {
-            return $inline;
-        }
-
-        $path = $payload['transcript_path'] ?? $payload['transcriptPath'] ?? null;
-        if (! is_string($path)) {
-            return 0;
-        }
-
-        // The transcript file is sometimes still being flushed at the
-        // instant the Stop hook fires, so the latest assistant entry
-        // hasn't landed yet. Retry briefly to ride out the race.
-        for ($attempt = 0; $attempt < 3; $attempt++) {
-            $tokens = $this->transcripts->latestTurnOutputTokens($path);
-            if ($tokens > 0) {
-                return $tokens;
-            }
-            if ($attempt < 2) {
-                usleep(100_000);
-            }
-        }
-
-        return 0;
+        return TurnUsage::fromPayload($payload, $this->models);
     }
 
     /**

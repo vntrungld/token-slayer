@@ -11,7 +11,6 @@ use App\Models\Boss;
 use App\Models\Event;
 use App\Models\User;
 use App\Services\FighterChargingCache;
-use App\Services\TranscriptReader;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
@@ -60,13 +59,11 @@ test('Stop event with tokens damages the current boss and broadcasts HitDealt', 
     });
 });
 
-test('Stop event without inline tokens reads damage from the transcript file', function () {
+test('Stop event without inline tokens no longer reads the transcript', function () {
     $transcript = tempnam(sys_get_temp_dir(), 'transcript-');
     file_put_contents($transcript, collect([
         ['type' => 'user', 'message' => ['content' => [['type' => 'text', 'text' => 'go']]]],
         ['type' => 'assistant', 'message' => ['usage' => ['output_tokens' => 120_000]]],
-        ['type' => 'user', 'message' => ['content' => [['type' => 'tool_result', 'content' => 'ok']]]],
-        ['type' => 'assistant', 'message' => ['usage' => ['output_tokens' => 80_000]]],
     ])->map(fn ($e) => json_encode($e))->implode("\n"));
 
     $this->withHeader('Authorization', 'Bearer tok')
@@ -77,19 +74,21 @@ test('Stop event without inline tokens reads damage from the transcript file', f
         ])
         ->assertCreated();
 
-    expect(Boss::sole()->current_hp)->toBe(800_000)
-        ->and(Event::sole()->tokens)->toBe(200_000);
+    // The hook owns token extraction now: it reads the transcript on the
+    // machine that owns it and sends the total inline. The server-side
+    // fallback only ever ran when hook host == server, so production never
+    // used it, and `transcript_path` is no longer sent at all.
+    expect(Event::count())->toBe(0)
+        ->and(Boss::sole()->current_hp)->toBe(1_000_000);
 
     @unlink($transcript);
 });
 
-test('Stop event without inline tokens reads damage from the Antigravity transcript file', function () {
+test('Stop event without inline tokens deals no damage for Antigravity either', function () {
     $transcript = tempnam(sys_get_temp_dir(), 'transcript-agy-');
     file_put_contents($transcript, collect([
         ['source' => 'USER_EXPLICIT', 'type' => 'USER_INPUT', 'content' => 'hello'],
         ['source' => 'MODEL', 'type' => 'PLANNER_RESPONSE', 'usage' => ['output_tokens' => 150_000]],
-        ['source' => 'SYSTEM', 'type' => 'TOOL_RESULT', 'content' => 'tool done'],
-        ['source' => 'MODEL', 'type' => 'PLANNER_RESPONSE', 'usage' => ['output_tokens' => 100_000]],
     ])->map(fn ($e) => json_encode($e))->implode("\n"));
 
     $this->withHeader('Authorization', 'Bearer tok')
@@ -100,8 +99,8 @@ test('Stop event without inline tokens reads damage from the Antigravity transcr
         ])
         ->assertCreated();
 
-    expect(Boss::sole()->current_hp)->toBe(750_000)
-        ->and(Event::sole()->tokens)->toBe(250_000);
+    expect(Event::count())->toBe(0)
+        ->and(Boss::sole()->current_hp)->toBe(1_000_000);
 
     @unlink($transcript);
 });
@@ -140,33 +139,23 @@ test('Stop event with no tokens still broadcasts FighterChargeCleared to clear c
     expect(Event::count())->toBe(0);
 });
 
-test('Stop event retries the transcript read until the assistant entry lands', function () {
+test('Stop event with no inline tokens does not retry or dispatch a hit', function () {
     Illuminate\Support\Facades\Event::fake([HitDealt::class]);
 
-    $transcript = tempnam(sys_get_temp_dir(), 'transcript-race-');
-    // At the instant the Stop hook would have fired, only the user prompt
-    // is on disk; the assistant entry lands a moment later.
-    file_put_contents($transcript, json_encode([
-        'type' => 'user', 'message' => ['content' => [['type' => 'text', 'text' => 'go']]],
-    ]));
-
-    $reader = $this->mock(TranscriptReader::class);
-    $reader->shouldReceive('latestTurnOutputTokens')
-        ->times(2)
-        ->andReturnValues([0, 75_000]);
-
+    // The server used to retry a transcript read 3x/100ms to ride out the
+    // flush race. That loop only ever ran when the hook host and the server
+    // were the same machine, so it never helped production; it is gone, and a
+    // tokenless Stop is now simply a no-damage turn.
     $this->withHeader('Authorization', 'Bearer tok')
         ->postJson('/api/events', [
             'hook_event_name' => 'Stop',
             'session_id' => 'sess-race',
-            'transcript_path' => $transcript,
         ])
         ->assertCreated();
 
-    expect(Boss::sole()->current_hp)->toBe(925_000);
-    Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class);
-
-    @unlink($transcript);
+    expect(Boss::sole()->current_hp)->toBe(1_000_000)
+        ->and(Event::count())->toBe(0);
+    Illuminate\Support\Facades\Event::assertNotDispatched(HitDealt::class);
 });
 
 test('Stop event killing the boss broadcasts BossKilled then BossSpawned', function () {
@@ -587,4 +576,61 @@ test('events table has a nullable model column', function () {
     $event = Event::factory()->create(['user_id' => $this->user->id, 'model' => null]);
 
     expect($event->fresh()->model)->toBeNull();
+});
+
+test('records the model a Stop event reports', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'session_id' => 'sess-model',
+            'tokens' => 4070,
+            'models' => ['claude-opus-5' => 4070],
+        ])
+        ->assertCreated();
+
+    expect(Event::latest('id')->first()->model)->toBe('claude-opus-5');
+});
+
+test('records a null model when the client sends no models map', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'session_id' => 'sess-old-client',
+            'tokens' => 4070,
+        ])
+        ->assertCreated();
+
+    $event = Event::latest('id')->first();
+
+    expect($event->model)->toBeNull()
+        ->and($event->tokens)->toBe(4070);
+});
+
+test('labels a mixed turn by its most expensive model', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'session_id' => 'sess-mixed',
+            'tokens' => 14253,
+            'models' => ['claude-opus-5' => 9199, 'claude-sonnet-5' => 5054],
+        ])
+        ->assertCreated();
+
+    $event = Event::latest('id')->first();
+
+    expect($event->model)->toBe('claude-opus-5')
+        ->and($event->tokens)->toBe(14253);
+});
+
+test('ignores a hostile models map without failing ingest', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'session_id' => 'sess-hostile',
+            'tokens' => 100,
+            'models' => 'not-a-map',
+        ])
+        ->assertCreated();
+
+    expect(Event::latest('id')->first()->model)->toBeNull();
 });
