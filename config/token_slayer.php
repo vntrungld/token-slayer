@@ -19,6 +19,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Update pause
+    |--------------------------------------------------------------------------
+    |
+    | Fleet-wide kill switch for client self-update. Flipping this true stops
+    | every machine from updating on its next ingest round-trip, so a bad
+    | release can be halted centrally instead of by reaching each developer.
+    |
+    */
+
+    'updates_paused' => (bool) env('TOKEN_SLAYER_UPDATES_PAUSED', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Anthropic OAuth (server-side quota probing)
     |--------------------------------------------------------------------------
     |

@@ -4,7 +4,7 @@ use App\Http\Controllers\Auth\SlackController;
 use App\Http\Controllers\AvatarProxyController;
 use App\Http\Controllers\HistoryController;
 use App\Http\Controllers\SlayerWheelController;
-use App\Services\GitHub\ReleaseResolver;
+use App\Services\Client\ReleaseArtifacts;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -45,33 +45,20 @@ Route::get('/admin/{path?}', function (?string $path = null) {
     return redirect('/dashboard'.($path === null ? '' : '/'.$path).($query === null ? '' : '?'.$query));
 })->where('path', '.*');
 
-// clientVersion comes from ReleaseResolver directly, NOT the cache: the version
-// stamped into the served script must match the artifact being served.
-Route::get('/install', fn (ReleaseResolver $resolver) => response(
-    view('install-script', [
-        'baseUrl' => url('/api/events'),
-        'apiBase' => url('/'),
-        'namespace' => config('app.hook_namespace'),
-        'clientVersion' => $resolver->latest()['version'] ?? '',
-        'hookVersion' => config('token_slayer.hook_version'),
-        'installUrl' => route('install-script'),
-        'slayerWheelUrl' => route('slayer-wheel'),
-    ])->render(),
+// Served from ReleaseArtifacts so the bytes handed out are byte-for-byte the
+// ones whose sha256 the ingest response publishes. Rendering a second copy here
+// would let a release landing between the two renders publish a digest for
+// bytes nobody received, and every client would then refuse to update.
+Route::get('/install', fn (ReleaseArtifacts $artifacts) => response(
+    $artifacts->body('install-script') ?? abort(503, 'The installer is temporarily unavailable. Try again shortly.'),
     200,
     ['Content-Type' => 'text/x-shellscript; charset=utf-8'],
 ))->name('install-script');
 
 // Native-Windows PowerShell installer. Mirrors /install; `installUrl` points at
 // itself so `token-slayer update` on Windows re-fetches the PowerShell script.
-Route::get('/install.ps1', fn (ReleaseResolver $resolver) => response(
-    view('install-script-ps1', [
-        'baseUrl' => url('/api/events'),
-        'namespace' => config('app.hook_namespace'),
-        'clientVersion' => $resolver->latest()['version'] ?? '',
-        'hookVersion' => config('token_slayer.hook_version'),
-        'installUrl' => route('install-script-ps1'),
-        'slayerWheelUrl' => route('slayer-wheel'),
-    ])->render(),
+Route::get('/install.ps1', fn (ReleaseArtifacts $artifacts) => response(
+    $artifacts->body('install-script-ps1') ?? abort(503, 'The installer is temporarily unavailable. Try again shortly.'),
     200,
     ['Content-Type' => 'text/plain; charset=utf-8'],
 ))->name('install-script-ps1');

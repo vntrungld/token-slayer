@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\FighterChargingCache;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 
 uses(RefreshDatabase::class);
@@ -683,4 +684,41 @@ test('a Fable turn broadcasts its flair, an Opus turn does not', function () {
         fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable');
     Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
         fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null);
+});
+
+test('the ingest response tells the client what to be on and whether to hold', function () {
+    config(['token_slayer.hook_version' => '7', 'token_slayer.updates_paused' => false]);
+    Http::fake(['api.github.com/*' => Http::response([
+        'tag_name' => 'v1.0.0', 'assets' => [['id' => 1, 'name' => 'slayer_cli-latest.whl']],
+    ])]);
+
+    $response = $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', ['hook_event_name' => 'Stop', 'tokens' => 0])
+        ->assertCreated();
+
+    expect($response->json('hook_version'))->toBe('7')
+        ->and($response->json('install_sha256'))->toMatch('/^[0-9a-f]{64}$/');
+});
+
+test('the paused flag can halt the fleet without touching a machine', function () {
+    config(['token_slayer.updates_paused' => true]);
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', ['hook_event_name' => 'Stop', 'tokens' => 0])
+        ->assertCreated()
+        ->assertJsonPath('paused', true);
+});
+
+test('ingest still records the event when the digests cannot be produced', function () {
+    // A missing digest must never cost an event: /api/events is the single
+    // append-only write path, and a 500 here loses the row with no server
+    // record -- the exact silent-missing-row failure this feature removes.
+    Cache::flush();
+    Http::fake(fn () => throw new RuntimeException('GitHub down'));
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', ['hook_event_name' => 'Stop', 'tokens' => 4070])
+        ->assertCreated();
+
+    expect(Event::count())->toBe(1);
 });

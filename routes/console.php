@@ -11,6 +11,11 @@ Artisan::command('inspire', function () {
 
 Schedule::command('fighters:sweep-idle')->everyMinute();
 
+// Keeps the install-script/wheel digests warm so POST /api/events never
+// resolves a GitHub release inline: that call has an 8s timeout while the
+// client's curl gives up after 3s.
+Schedule::command('client-artifacts:refresh')->everyFiveMinutes()->withoutOverlapping();
+
 Schedule::command('battlefield:recap daily')
     ->dailyAt('09:00')
     ->timezone('Asia/Ho_Chi_Minh');

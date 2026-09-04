@@ -14,6 +14,7 @@ use App\Models\Event;
 use App\Services\AccountResolver;
 use App\Services\Accounts\AccountMembershipRecorder;
 use App\Services\Battlefield\ModelFlairResolver;
+use App\Services\Client\ReleaseArtifacts;
 use App\Services\DamageService;
 use App\Services\Events\ModelUsageParser;
 use App\Services\Events\TurnUsage;
@@ -27,6 +28,7 @@ class EventController extends Controller
         private DamageService $damage,
         private ModelUsageParser $models,
         private ModelFlairResolver $flair,
+        private ReleaseArtifacts $artifacts,
         private FighterChargingCache $chargingCache,
         private AccountResolver $accounts,
         private AccountMembershipRecorder $membership,
@@ -134,7 +136,14 @@ class EventController extends Controller
             }
         }
 
-        return response()->json(['ok' => true], 201);
+        return response()->json(array_filter([
+            'ok' => true,
+            'hook_version' => config('token_slayer.hook_version'),
+            'install_sha256' => $this->artifacts->digest('install-script'),
+            'install_ps1_sha256' => $this->artifacts->digest('install-script-ps1'),
+            'wheel_sha256' => $this->artifacts->wheelDigest(),
+            'paused' => config('token_slayer.updates_paused'),
+        ], fn (mixed $value): bool => $value !== null), 201);
     }
 
     private function aliveBoss(): ?Boss
