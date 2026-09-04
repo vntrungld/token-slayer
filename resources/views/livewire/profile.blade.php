@@ -63,6 +63,11 @@
                     Your client is running an outdated version{{ $attribution['clientVersion'] ? " ({$attribution['clientVersion']})" : '' }}. Run <code>token-slayer update</code> to get the latest.
                 </p>
             @endif
+            @if ($attribution['hookOutdated'])
+                <p class="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                    Your hook is on v{{ $attribution['hookVersion'] }} but v{{ $attribution['latestHookVersion'] }} is available &mdash; usage may be recorded with less detail until you run <code>token-slayer update</code>.
+                </p>
+            @endif
         </section>
 
         <section class="bg-white border border-gray-200 rounded-xl p-5 space-y-4">

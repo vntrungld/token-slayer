@@ -960,3 +960,40 @@ test('the Antigravity registration drops PostToolUse too', function (string $url
         ->and($script)->toContain('for event in ["PreToolUse"]:');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
 
+test('the POSIX install script stamps the repo-owned hook version', function () {
+    config(['token_slayer.hook_version' => '7']);
+
+    // NOT assertSee('7'): the rendered script already contains that digit in
+    // the pinned jq sha256 lines, so such a test would be green before any code
+    // is written and would prove nothing about the route wiring.
+    $script = $this->get('/install')->assertOk()->getContent();
+
+    expect($script)->toContain("HOOK_VERSION='7'")
+        ->and($script)->toContain('/hook-version');
+});
+
+test('the Windows install script stamps the hook version through its placeholder chain', function () {
+    // The ps1 hook lives in a single-quoted PowerShell here-string, so nothing
+    // interpolates: the value reaches it through .Replace() at install time.
+    // Asserting the rendered literal would be wrong here, and forgetting the
+    // Replace link would ship Windows hooks reporting "__TS_HOOK_VERSION__".
+    config(['token_slayer.hook_version' => '7']);
+
+    $script = $this->get('/install.ps1')->assertOk()->getContent();
+
+    expect($script)->toContain("\$HookVersion = '7'")
+        ->and($script)->toContain(".Replace('__TS_HOOK_VERSION__', \$HookVersion)")
+        ->and($script)->toContain("HOOK_VERSION='__TS_HOOK_VERSION__'")
+        ->and($script)->toContain("'hook-version'");
+});
+
+test('the hook reports its own version alongside the CLI version', function (string $url) {
+    // A dedicated field rather than an encoding inside client_version: the
+    // payload filter exists to keep session CONTENT off the wire, and a version
+    // number is not content. Parsing a composite string would also risk
+    // rendering "1.0.4+hook5" wherever client_version is displayed.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    $start = strpos($script, 'FILTERED=$(');
+    expect(substr($script, $start, 420))->toContain('hook_version');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);

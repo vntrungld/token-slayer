@@ -4,6 +4,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Hook version
+    |--------------------------------------------------------------------------
+    |
+    | The version of the hook shipped by THIS repo. Deliberately separate from
+    | the slayer-cli release tag: that tag lives in a repo this project does not
+    | publish, so a hook-only change would otherwise ship with an unchanged
+    | version and every update prompt would silently no-op. Bump this whenever
+    | the hook template changes in a way clients must pick up.
+    |
+    */
+
+    'hook_version' => (string) env('TOKEN_SLAYER_HOOK_VERSION', '5'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Anthropic OAuth (server-side quota probing)
     |--------------------------------------------------------------------------
     |

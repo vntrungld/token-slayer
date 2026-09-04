@@ -40,6 +40,7 @@ class User extends Authenticatable implements FilamentUser
         'equipped_character',
         'last_event_at',
         'client_version',
+        'hook_version',
     ];
 
     /**

@@ -224,6 +224,7 @@ elif [ "${PROVIDER:-}" = "antigravity" ]; then
 fi
 
 CLIENT_VERSION='{{ $clientVersion }}'
+HOOK_VERSION='{{ $hookVersion }}'
 HOOK_UA='token-slayer-hook/{{ $clientVersion }} (external, cli)'
 NS_DIR="$HOME/.config/{{ $namespace }}"
 
@@ -469,7 +470,8 @@ if [ -x "$JQ" ]; then
   resolve_account
   BODY=$(printf '%s' "$BODY" | "$JQ" -c --arg e "$ACC_EMAIL" --arg u "$ACC_UUID" \
     --arg s "$ACC_SOURCE" --arg v "$CLIENT_VERSION" --arg o "$ACC_ORG_ID" \
-    '. + {client_version: $v} + (if $s != "" then {account_source: $s} else {} end)
+    --arg hv "$HOOK_VERSION" \
+    '. + {client_version: $v, hook_version: $hv} + (if $s != "" then {account_source: $s} else {} end)
        + (if $e != "" then {account_email: $e, account_uuid: $u} else {} end)
        + (if $o != "" then {account_org_id: $o} else {} end)' \
     2>/dev/null || printf '%s' "$BODY")
@@ -496,7 +498,8 @@ CUSTOM_SH="$HOME/.config/{{ $namespace }}/custom.sh"
 if [ -x "$JQ" ]; then
   FILTERED=$(printf '%s' "$BODY" | "$JQ" -c '{
     hook_event_name, session_id, tokens, models, tool_name, custom_activity,
-    client_version, account_email, account_uuid, account_source, account_org_id
+    client_version, hook_version, account_email, account_uuid, account_source,
+    account_org_id
   } | with_entries(select(.value != null))' 2>/dev/null)
   case "$FILTERED" in '{'*) BODY="$FILTERED" ;; esac
 fi
@@ -536,6 +539,9 @@ if [ -n "$HOOK_BACKUP" ]; then
 fi
 
 printf '%s' "{{ $clientVersion }}" > "$HOME/.config/{{ $namespace }}/version"
+# Separate from `version`: the CLI wheel and the hook are released by different
+# repos, so a hook-only change must be visible without a CLI release.
+printf '%s' "{{ $hookVersion }}" > "$HOME/.config/{{ $namespace }}/hook-version"
 
 mkdir -p "$HOME/.local/bin"
 
@@ -681,6 +687,7 @@ case "${1:-}" in
     ;;
   status)
     echo "client version: $(cat "$NS_DIR/version" 2>/dev/null || echo none) (latest known at install: $LATEST)"
+    echo "hook version: $(cat "$NS_DIR/hook-version" 2>/dev/null || echo none) (served: {{ $hookVersion }})"
     [ -s "$NS_DIR/token" ] && echo "hook token: present" || echo "hook token: MISSING"
     if [ -r "$NS_DIR/account.json" ]; then
       echo "account: $("$HOME/.config/{{ $namespace }}/bin/jq" -r '.email' "$NS_DIR/account.json" 2>/dev/null) (manual)"

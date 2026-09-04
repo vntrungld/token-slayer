@@ -19,7 +19,7 @@ class Profile extends Component
      *
      * @param  User  $user  the profile owner whose latest event is being inspected
      * @param  CachedLatestVersion  $latest  supplies the latest released CLI version
-     * @return array{event:?Event, clientVersion:?string, latestVersion:?string, outdated:bool}
+     * @return array{event:?Event, clientVersion:?string, latestVersion:?string, outdated:bool, hookVersion:?string, latestHookVersion:string, hookOutdated:bool}
      */
     private function attributionStatus(User $user, CachedLatestVersion $latest): array
     {
@@ -30,6 +30,10 @@ class Profile extends Component
             'clientVersion' => $user->client_version,
             'latestVersion' => $latestVersion,
             'outdated' => $latestVersion !== null && $user->client_version !== $latestVersion,
+            'hookVersion' => $user->hook_version,
+            'latestHookVersion' => config('token_slayer.hook_version'),
+            'hookOutdated' => $user->hook_version !== null
+                && $user->hook_version !== config('token_slayer.hook_version'),
         ];
     }
 

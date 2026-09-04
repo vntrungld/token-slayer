@@ -41,6 +41,7 @@ class EventController extends Controller
         $provider = $request->query('provider', 'claude-code');
         $accountId = $this->accounts->resolve($accountOrgId, $accountEmail, $provider);
         $clientVersion = $this->trimmedStringOrNull($payload['client_version'] ?? null);
+        $hookVersion = $this->trimmedStringOrNull($payload['hook_version'] ?? null);
         $customActivity = $this->trimmedStringOrNull($payload['custom_activity'] ?? null);
 
         $hookName = $payload['hook_event_name'] ?? 'unknown';
@@ -52,6 +53,7 @@ class EventController extends Controller
         $user->forceFill([
             'last_event_at' => now(),
             'client_version' => $clientVersion ?? $user->client_version,
+            'hook_version' => $hookVersion ?? $user->hook_version,
         ])->save();
 
         if ($eventType === 'user-prompt-submit' || $eventType === 'pre-invocation') {

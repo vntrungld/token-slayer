@@ -634,3 +634,29 @@ test('ignores a hostile models map without failing ingest', function () {
 
     expect(Event::latest('id')->first()->model)->toBeNull();
 });
+
+test('records the hook version the client reports', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'Stop',
+            'tokens' => 100,
+            'client_version' => '1.1.5',
+            'hook_version' => '7',
+        ])
+        ->assertCreated();
+
+    $user = $this->user->fresh();
+
+    expect($user->hook_version)->toBe('7')
+        ->and($user->client_version)->toBe('1.1.5');
+});
+
+test('leaves the stored hook version alone when a stale client omits it', function () {
+    $this->user->forceFill(['hook_version' => '6'])->save();
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', ['hook_event_name' => 'Stop', 'tokens' => 100])
+        ->assertCreated();
+
+    expect($this->user->fresh()->hook_version)->toBe('6');
+});

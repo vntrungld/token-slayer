@@ -19,6 +19,7 @@ $Ns            = '{{ $namespace }}'
 $WheelUrl      = '{{ $slayerWheelUrl }}'
 $InstallUrl    = '{{ $installUrl }}'
 $ClientVersion = '{{ $clientVersion }}'
+$HookVersion = '{{ $hookVersion }}'
 $BaseUrl       = '{{ $baseUrl }}'
 $EnvVarName    = '{{ $envVar }}'
 
@@ -439,6 +440,7 @@ elif [ "${PROVIDER:-}" = "antigravity" ]; then
 fi
 
 CLIENT_VERSION='__TS_CLIENT_VERSION__'
+HOOK_VERSION='__TS_HOOK_VERSION__'
 HOOK_UA='token-slayer-hook/__TS_CLIENT_VERSION__ (external, cli)'
 NS_DIR="$HOME/.config/__TS_NAMESPACE__"
 
@@ -673,7 +675,8 @@ if [ -x "$JQ" ]; then
   resolve_account
   BODY=$(printf '%s' "$BODY" | "$JQ" -c --arg e "$ACC_EMAIL" --arg u "$ACC_UUID" \
     --arg s "$ACC_SOURCE" --arg v "$CLIENT_VERSION" --arg o "$ACC_ORG_ID" \
-    '. + {client_version: $v} + (if $s != "" then {account_source: $s} else {} end)
+    --arg hv "$HOOK_VERSION" \
+    '. + {client_version: $v, hook_version: $hv} + (if $s != "" then {account_source: $s} else {} end)
        + (if $e != "" then {account_email: $e, account_uuid: $u} else {} end)
        + (if $o != "" then {account_org_id: $o} else {} end)' \
     2>/dev/null || printf '%s' "$BODY")
@@ -700,7 +703,8 @@ CUSTOM_SH="$HOME/.config/__TS_NAMESPACE__/custom.sh"
 if [ -x "$JQ" ]; then
   FILTERED=$(printf '%s' "$BODY" | "$JQ" -c '{
     hook_event_name, session_id, tokens, models, tool_name, custom_activity,
-    client_version, account_email, account_uuid, account_source, account_org_id
+    client_version, hook_version, account_email, account_uuid, account_source,
+    account_org_id
   } | with_entries(select(.value != null))' 2>/dev/null)
   case "$FILTERED" in '{'*) BODY="$FILTERED" ;; esac
 fi
@@ -715,7 +719,7 @@ printf '%s' "$BODY" | curl -s --max-time 3 -X POST "$URL" \
   -H 'Content-Type: application/json' \
   --data-binary @- >/dev/null 2>&1 &
 '@
-$hookSh = $hookShTemplate.Replace('__TS_BASE_URL__', $BaseUrl).Replace('__TS_NAMESPACE__', $Ns).Replace('__TS_CLIENT_VERSION__', $ClientVersion)
+$hookSh = $hookShTemplate.Replace('__TS_BASE_URL__', $BaseUrl).Replace('__TS_NAMESPACE__', $Ns).Replace('__TS_CLIENT_VERSION__', $ClientVersion).Replace('__TS_HOOK_VERSION__', $HookVersion)
 # LF line endings (not CRLF) -- this file is executed by bash.
 $hookSh = $hookSh -replace "`r`n", "`n"
 [System.IO.File]::WriteAllText($Helper, $hookSh)
@@ -1020,6 +1024,7 @@ if (Test-Path $VenvPy) {
 }
 
 Set-Content -Path (Join-Path $Cfg 'version') -Value $ClientVersion -Encoding Ascii -NoNewline
+Set-Content -Path (Join-Path $Cfg 'hook-version') -Value $HookVersion -Encoding Ascii -NoNewline
 
 if (-not $tokenValue -and (-not (Test-Path $tokenFile) -or (Get-Item $tokenFile).Length -eq 0)) {
   Write-Host ""
