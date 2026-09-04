@@ -144,7 +144,11 @@ if [ -f "$HELPER" ]; then
     fi
 fi
 
-cat > "$HELPER" <<'HOOK_SH'
+# Written to a temp file in the same directory and renamed into place: the
+# hook may be EXECUTING right now, and bash reads a script lazily by byte
+# offset, so truncating it mid-run makes the running copy read past the end
+# and lose that turn's event with no error anywhere.
+cat > "$HELPER.tmp" <<'HOOK_SH'
 #!/usr/bin/env bash
 set -u
 
@@ -514,7 +518,8 @@ printf '%s' "$BODY" | curl -s --max-time 3 -X POST "$URL" \
   -H 'Content-Type: application/json' \
   --data-binary @- >/dev/null 2>&1 &
 HOOK_SH
-chmod +x "$HELPER"
+chmod +x "$HELPER.tmp"
+mv -f "$HELPER.tmp" "$HELPER"
 
 sha256 < "$HELPER" > "$CHECKSUM_FILE"
 
@@ -805,9 +810,16 @@ for event in events:
         {"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]}
     )
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 
 echo "installed Claude Code hooks -> $SETTINGS"
@@ -845,9 +857,16 @@ for event in events:
     entries.append({"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]})
     data["hooks"][event] = entries
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 
 echo "installed Claude Code usage-refresh hook -> $SETTINGS"
@@ -885,9 +904,16 @@ for event in events:
     entries.append({"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]})
     data["hooks"][event] = entries
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 
 echo "installed Claude Code session-tracking hook -> $SETTINGS"
@@ -917,8 +943,14 @@ text = re.sub(
     text,
 )
 
-with open(path, "w") as f:
+# Write-then-rename: config.toml is Codex's own file and may be read while a
+# session is live; truncating it in place could hand Codex a partial config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     f.write(text)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 fi
 
@@ -966,9 +998,16 @@ for event in events:
     groups.append({"hooks": [{"type": "command", "command": cmd}]})
     data["hooks"][event] = groups
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 
 echo "installed Codex CLI hooks -> $CODEX_HOOKS"
@@ -1016,9 +1055,16 @@ for event in ["PreToolUse"]:
         "hooks": [{"type": "command", "command": cmd}]
     }]
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 PY
 
 echo "installed Antigravity CLI hooks -> $AGY_HOOKS"

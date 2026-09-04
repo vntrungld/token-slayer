@@ -722,7 +722,10 @@ printf '%s' "$BODY" | curl -s --max-time 3 -X POST "$URL" \
 $hookSh = $hookShTemplate.Replace('__TS_BASE_URL__', $BaseUrl).Replace('__TS_NAMESPACE__', $Ns).Replace('__TS_CLIENT_VERSION__', $ClientVersion).Replace('__TS_HOOK_VERSION__', $HookVersion)
 # LF line endings (not CRLF) -- this file is executed by bash.
 $hookSh = $hookSh -replace "`r`n", "`n"
-[System.IO.File]::WriteAllText($Helper, $hookSh)
+# Write-then-rename: the hook may be executing right now, and truncating it
+# in place would make the running copy read past the end of the file.
+[System.IO.File]::WriteAllText("$Helper.tmp", $hookSh)
+Move-Item -Force "$Helper.tmp" $Helper
 
 Get-Sha256Hex $hookSh | Set-Content -Path $ChecksumFile -Encoding Ascii -NoNewline
 
@@ -834,9 +837,16 @@ for event in events:
         {"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]}
     )
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 '@ @($Settings)
 
 Write-Host "installed Claude Code hooks -> $Settings"
@@ -871,9 +881,16 @@ for event in events:
     entries.append({"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]})
     data["hooks"][event] = entries
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 '@ @($Settings)
 
 Write-Host "installed Claude Code usage-refresh hook -> $Settings"
@@ -904,9 +921,16 @@ for event in events:
     entries.append({"hooks": [{"type": "command", "command": cmd, "shell": "bash"}]})
     data["hooks"][event] = entries
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 '@ @($Settings)
 
 Write-Host "installed Claude Code session-tracking hook -> $Settings"
@@ -933,8 +957,14 @@ text = re.sub(
     text,
 )
 
-with open(path, "w") as f:
+# Write-then-rename: config.toml is Codex's own file and may be read while a
+# session is live; truncating it in place could hand Codex a partial config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     f.write(text)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 '@ @($CodexConfig)
 
 $codexBlock = @"
@@ -999,9 +1029,16 @@ for event in ["PreToolUse"]:
         "hooks": [{"type": "command", "command": cmd}]
     }]
 
-with open(path, "w") as f:
+# Write-then-rename: these files are read by a live Claude Code / Codex
+# session, and truncate-in-place leaves a window where a reader sees a
+# partial or empty config.
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
 '@ @($AgyHooks)
 
 Write-Host "installed Antigravity CLI hooks -> $AgyHooks"

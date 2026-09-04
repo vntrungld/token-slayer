@@ -26,8 +26,9 @@ test('install.sh drops a hook helper script that enriches Stop events with trans
 
     expect($script)
         ->toContain('HELPER="$HOME/.config/token_slayer/send-hook.sh"')
-        ->toContain("cat > \"\$HELPER\" <<'HOOK_SH'")
-        ->toContain('chmod +x "$HELPER"')
+        ->toContain("cat > \"\$HELPER.tmp\" <<'HOOK_SH'")
+        ->toContain('chmod +x "$HELPER.tmp"')
+        ->toContain('mv -f "$HELPER.tmp" "$HELPER"')
         ->toContain('transcript_path')
         ->toContain('output_tokens')
         ->toContain('CLAUDE_CMD="bash $HELPER"')
@@ -233,7 +234,7 @@ it('compares the existing send-hook.sh against the stored checksum before overwr
         ->toContain('[ -z "$STORED_SHA" ] || [ "$OLD_SHA" != "$STORED_SHA" ]');
 
     $compareBlockPosition = strpos($script, 'if [ -f "$HELPER" ]');
-    $overwritePosition = strpos($script, "cat > \"\$HELPER\" <<'HOOK_SH'");
+    $overwritePosition = strpos($script, "cat > \"\$HELPER.tmp\" <<'HOOK_SH'");
 
     expect($compareBlockPosition)->toBeLessThan($overwritePosition);
 });
@@ -246,7 +247,7 @@ it('backs up a hand-modified send-hook.sh before overwriting it', function () {
         ->toContain('cp "$HELPER" "$HOOK_BACKUP"');
 
     $backupPosition = strpos($script, 'HOOK_BACKUP="$HELPER.bak.$(date +%Y%m%d%H%M%S)"');
-    $overwritePosition = strpos($script, "cat > \"\$HELPER\" <<'HOOK_SH'");
+    $overwritePosition = strpos($script, "cat > \"\$HELPER.tmp\" <<'HOOK_SH'");
 
     expect($backupPosition)->toBeLessThan($overwritePosition);
 });
@@ -729,7 +730,7 @@ it('bootstraps a pinned jq binary instead of relying on the system jq', function
     // Must run before the HOOK_SH heredoc is written, so a jq failure stops
     // the install before any jq-dependent file is even created.
     $jqBootstrapPos = strpos($script, 'JQ_VERSION="1.8.2"');
-    $hookWritePos = strpos($script, "cat > \"\$HELPER\" <<'HOOK_SH'");
+    $hookWritePos = strpos($script, "cat > \"\$HELPER.tmp\" <<'HOOK_SH'");
     expect($jqBootstrapPos)->not->toBeFalse()
         ->and($hookWritePos)->not->toBeFalse()
         ->and($jqBootstrapPos)->toBeLessThan($hookWritePos);
@@ -888,7 +889,7 @@ test('the rendered hook helper is syntactically valid shell', function (string $
 
     expect($exitCode)->toBe(0, implode("\n", $output));
 })->with([
-    'sh' => ['/install', "/cat > \"\\\$HELPER\" <<'HOOK_SH'\n(.*?)\nHOOK_SH/s"],
+    'sh' => ['/install', "/cat > \"\\\$HELPER\\.tmp\" <<'HOOK_SH'\n(.*?)\nHOOK_SH/s"],
     'ps1' => ['/install.ps1', "/\\\$hookShTemplate = @'\n(.*?)\n'@/s"],
 ]);
 
@@ -997,3 +998,35 @@ test('the hook reports its own version alongside the CLI version', function (str
     $start = strpos($script, 'FILTERED=$(');
     expect(substr($script, $start, 420))->toContain('hook_version');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the POSIX installer writes the hook through a temp file and a rename', function () {
+    // cat > truncates in place. bash reads a script lazily by byte offset, so a
+    // Stop hook executing inside that window reads past the end of a truncated
+    // file and the turn's event is lost -- silently, because the hook is
+    // fire-and-forget with its output discarded.
+    $script = $this->get('/install')->assertOk()->getContent();
+
+    expect($script)->toContain('cat > "$HELPER.tmp" <<\'HOOK_SH\'')
+        ->and($script)->toContain('mv -f "$HELPER.tmp" "$HELPER"')
+        ->and($script)->not->toContain('cat > "$HELPER" <<\'HOOK_SH\'');
+});
+
+test('the PowerShell installer replaces its hook atomically', function () {
+    // The ps1 has no cat > and no $HELPER: it writes via WriteAllText, so the
+    // POSIX assertions above would be vacuous on one half and unsatisfiable on
+    // the other.
+    $script = $this->get('/install.ps1')->assertOk()->getContent();
+
+    expect($script)->toContain('WriteAllText("$Helper.tmp"')
+        ->and($script)->toContain('Move-Item -Force "$Helper.tmp" $Helper');
+});
+
+test('both installers replace merged JSON config atomically', function (string $url) {
+    // settings.json / hooks.json are written by embedded Python, not by cat --
+    // and they are the files Claude Code itself reads while a session is live.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('os.replace(tmp, path)')
+        ->and($script)->not->toContain('with open(path, "w") as f:');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
