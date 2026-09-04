@@ -8,7 +8,9 @@ use App\Filament\Widgets\TokenVolumeChart;
 use App\Filament\Widgets\TopAccountsLeaderboard;
 use App\Filament\Widgets\TopUsersLeaderboard;
 use App\Models\Account;
+use App\Models\Event;
 use App\Models\User;
+use App\Services\Analytics\UsageFilters;
 use BackedEnum;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -102,6 +104,18 @@ class UsageAnalytics extends Page
                 Select::make('provider')
                     ->options(['claude-code' => 'Claude Code', 'codex' => 'Codex', 'claude.ai' => 'claude.ai'])
                     ->placeholder('All providers'),
+                Select::make('model')
+                    ->label('Model')
+                    ->options(fn (): array => Event::query()
+                        ->select('model')
+                        ->distinct()
+                        ->orderBy('model')
+                        ->pluck('model', 'model')
+                        ->filter()
+                        ->put(UsageFilters::UNKNOWN_MODEL, 'Unknown')
+                        ->all())
+                    ->searchable()
+                    ->placeholder('All models'),
                 Select::make('user_id')
                     ->label('User')
                     ->options(fn (): array => User::orderBy('name')->pluck('name', 'id')->all())

@@ -3,6 +3,7 @@
 namespace App\Services\Analytics;
 
 use App\Models\Event;
+use App\Services\Analytics\Concerns\ScopesEventsByFilters;
 use Illuminate\Support\Carbon;
 
 /**
@@ -13,6 +14,20 @@ use Illuminate\Support\Carbon;
  */
 final class UsageFilters
 {
+    /**
+     * Filter value standing for "events with no recorded model". `unknown` is
+     * a display label for `NULL`, never a stored value, so matching it with an
+     * equality comparison would return no rows at all — which matters because
+     * it is the most populated bucket the day model tracking ships.
+     *
+     * Declared on this class rather than on {@see ScopesEventsByFilters}
+     * because PHP forbids reading a trait constant through the trait name, and
+     * the filter form does not `use` that trait.
+     *
+     * @var string
+     */
+    public const string UNKNOWN_MODEL = 'unknown';
+
     /**
      * Largest range (in days) any query will scan, to bound result size and
      * protect the database from an unbounded custom range. Not applied to
@@ -70,6 +85,9 @@ final class UsageFilters
      * @param  ?int  $accountId  narrow to one account, or null for all
      * @param  ?string  $provider  narrow to one provider, or null for all
      * @param  ?int  $userId  narrow to one user, or null for all
+     * @param  ?string  $model  narrow to one raw model id, the sentinel
+     *                          {@see self::UNKNOWN_MODEL} for events with no
+     *                          recorded model, or null for all
      */
     public function __construct(
         public readonly Carbon $from,
@@ -77,6 +95,7 @@ final class UsageFilters
         public readonly ?int $accountId,
         public readonly ?string $provider,
         public readonly ?int $userId,
+        public readonly ?string $model = null,
     ) {
         $seconds = $from->diffInSeconds($to);
 
@@ -132,6 +151,7 @@ final class UsageFilters
             self::intOrNull($filters['account_id'] ?? null),
             ($filters['provider'] ?? null) ?: null,
             self::intOrNull($filters['user_id'] ?? null),
+            ($filters['model'] ?? null) ?: null,
         );
     }
 

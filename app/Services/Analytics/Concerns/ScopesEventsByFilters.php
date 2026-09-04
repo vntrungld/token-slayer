@@ -29,7 +29,10 @@ trait ScopesEventsByFilters
             ->whereBetween('events.created_at', [$filters->from, $filters->to])
             ->when($filters->accountId !== null, fn (Builder $q): Builder => $q->where('events.account_id', $filters->accountId))
             ->when($filters->provider !== null, fn (Builder $q): Builder => $q->where('events.provider', $filters->provider))
-            ->when($filters->userId !== null, fn (Builder $q): Builder => $q->where('events.user_id', $filters->userId));
+            ->when($filters->userId !== null, fn (Builder $q): Builder => $q->where('events.user_id', $filters->userId))
+            ->when($filters->model !== null, fn (Builder $q): Builder => $filters->model === UsageFilters::UNKNOWN_MODEL
+                ? $q->whereNull('events.model')
+                : $q->where('events.model', $filters->model));
     }
 
     /**
