@@ -76,7 +76,7 @@ class EventController extends Controller
             $this->dispatchSafely(new FighterJoined($user, $this->aliveBoss()));
         }
 
-        if ($eventType === 'stop') {
+        if ($eventType === 'stop' || $eventType === 'subagent-stop') {
             // Trackers that only emit Stop events (claude.ai, cowork) carry no
             // pre-action signal, so surface a persistent source label as their
             // charging activity instead of clearing the bubble outright.
@@ -228,19 +228,21 @@ class EventController extends Controller
     }
 
     /**
-     * Resolve a Stop event's usage from its payload. The hook computes both the
-     * token total and the per-model split on the machine that owns the
-     * transcript, so the server never opens a file and needs no retry loop —
-     * the old server-side fallback only ever ran when the hook host and the
-     * server were the same machine, and `transcript_path` is no longer sent.
+     * Resolve a Stop or SubagentStop event's usage from its payload. The hook
+     * computes both the token total and the per-model split on the machine
+     * that owns the transcript (the subagent's own transcript for
+     * SubagentStop), so the server never opens a file and needs no retry
+     * loop — the old server-side fallback only ever ran when the hook host
+     * and the server were the same machine, and `transcript_path` is no
+     * longer sent.
      *
      * @param  string  $eventType  the normalized hook event name
      * @param  array<string, mixed>  $payload  the raw hook payload
-     * @return ?TurnUsage null for anything that is not a Stop event
+     * @return ?TurnUsage null for anything that is not a Stop/SubagentStop event
      */
     private function resolveStopUsage(string $eventType, array $payload): ?TurnUsage
     {
-        if ($eventType !== 'stop') {
+        if ($eventType !== 'stop' && $eventType !== 'subagent-stop') {
             return null;
         }
 

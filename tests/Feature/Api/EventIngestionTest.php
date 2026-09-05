@@ -61,6 +61,41 @@ test('Stop event with tokens damages the current boss and broadcasts HitDealt', 
     });
 });
 
+test('SubagentStop event with tokens damages the current boss just like Stop', function () {
+    Illuminate\Support\Facades\Event::fake([HitDealt::class]);
+
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'SubagentStop',
+            'session_id' => 'sess-1:agent-abc',
+            'tokens' => 250_000,
+            'models' => ['claude-haiku-4-5-20251001' => 250_000],
+        ])
+        ->assertCreated();
+
+    $boss = Boss::sole();
+    expect($boss->current_hp)->toBe(750_000);
+
+    Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class, function ($e) {
+        return $e->damage === 250_000 && $e->boss->current_hp === 750_000;
+    });
+});
+
+test('SubagentStop event persists the hook-combined session_id and model verbatim', function () {
+    $this->withHeader('Authorization', 'Bearer tok')
+        ->postJson('/api/events', [
+            'hook_event_name' => 'SubagentStop',
+            'session_id' => 'sess-1:agent-abc',
+            'tokens' => 100,
+            'models' => ['claude-haiku-4-5-20251001' => 100],
+        ])
+        ->assertCreated();
+
+    $event = Event::sole();
+    expect($event->session_id)->toBe('sess-1:agent-abc')
+        ->and($event->model)->toBe('claude-haiku-4-5-20251001');
+});
+
 test('Stop event without inline tokens no longer reads the transcript', function () {
     $transcript = tempnam(sys_get_temp_dir(), 'transcript-');
     file_put_contents($transcript, collect([

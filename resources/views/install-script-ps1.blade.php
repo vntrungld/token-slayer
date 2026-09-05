@@ -384,6 +384,18 @@ BODY=$(cat)
 # system jq -- so hook behavior can never drift between machines.
 JQ="$HOME/.config/__TS_NAMESPACE__/bin/jq.exe"
 
+# A SubagentStop's session_id is the PARENT session's id, not unique per
+# subagent (per the official hook payload docs) -- fold in agent_id so this
+# agent's Event can never be conflated with the parent session's own Stop
+# events, which share that same session_id.
+if [ -x "$JQ" ]; then
+  BODY=$(printf '%s' "$BODY" | "$JQ" -c '
+    if .hook_event_name == "SubagentStop" and ((.agent_id // "") != "") then
+      .session_id = ((.session_id // "") + ":" + .agent_id)
+    else . end
+  ' 2>/dev/null || printf '%s' "$BODY")
+fi
+
 if [ -x "$JQ" ]; then
   TRANSCRIPT=$(printf '%s' "$BODY" | "$JQ" -r '.transcript_path // .transcriptPath // ""' 2>/dev/null)
   if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
@@ -885,13 +897,18 @@ import json, os, sys
 
 path = sys.argv[1]
 cmd = os.environ["CLAUDE_CMD"]
-# Only the events EventController actually handles. PostToolUse, SubagentStop,
-# SessionEnd and Notification fell through to a bare 201 -- and PostToolUse is
-# both the highest-frequency event (one per tool call) and the one carrying
+# Only the events EventController actually handles. PostToolUse, SessionEnd
+# and Notification fell through to a bare 201 -- and PostToolUse is both the
+# highest-frequency event (one per tool call) and the one carrying
 # tool_response, so not registering it stops that content at the source.
 # Liveness is unaffected: PreToolUse fires immediately before every PostToolUse,
-# with UserPromptSubmit and Stop bracketing the turn.
-events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]
+# with UserPromptSubmit and Stop bracketing the turn. SubagentStop fires once
+# per completed subagent with its OWN transcript_path (never the parent
+# session's file) -- without it, every Task-dispatched subagent's real token
+# usage is invisible: it never shares an assistant-type entry with the parent
+# transcript, so no amount of retrying or dedup on the parent's own Stop walk
+# can recover it.
+events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "SubagentStop"]
 
 try:
     with open(path) as f:

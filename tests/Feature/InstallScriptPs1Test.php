@@ -195,9 +195,10 @@ it('guards jq calls in the Windows hook template with -x (executable check), not
         ->not->toContain('[ -n "$JQ" ]')
         ->toContain('[ -x "$JQ" ]; then');
 
-    // Three now: transcript enrichment, the post-resolve_account body merge,
-    // and the payload filter the Windows hook previously did not have at all.
-    expect(substr_count($script, '[ -x "$JQ" ]'))->toBe(3);
+    // Four now: the SubagentStop session_id fold-in, transcript enrichment,
+    // the post-resolve_account body merge, and the payload filter the
+    // Windows hook previously did not have at all.
+    expect(substr_count($script, '[ -x "$JQ" ]'))->toBe(4);
 });
 
 it('bakes SLAYER_INSTALL_URL and SLAYER_NS into the Windows .cmd shims', function () {

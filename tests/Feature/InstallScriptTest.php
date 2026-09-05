@@ -41,7 +41,7 @@ test('install.sh registers the claude code hook events the server handles', func
     // test stays green while registering nothing. Assert the list itself.
     $script = $this->get('/install')->getContent();
 
-    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]');
+    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "SubagentStop"]');
 });
 
 test('install.sh registers the antigravity CLI hook events the server handles', function () {
@@ -793,15 +793,16 @@ it('guards jq calls with -x (executable check), not the always-true -n', functio
     // string) is always true regardless of whether that file actually exists or
     // is executable -- it provided none of the "defensive against a manually
     // deleted binary" protection it was meant to. `-x` actually tests existence
-    // + executability. Three guards: transcript-enrichment, post-resolve_account
-    // body-merge, and the now-unconditional payload filter.
+    // + executability. Four guards: the SubagentStop session_id fold-in,
+    // transcript-enrichment, post-resolve_account body-merge, and the
+    // now-unconditional payload filter.
     $script = $this->get(route('install-script'))->content();
 
     expect($script)
         ->not->toContain('[ -n "$JQ" ]')
         ->toContain('[ -x "$JQ" ]; then');
 
-    expect(substr_count($script, '-x "$JQ"'))->toBe(3);
+    expect(substr_count($script, '-x "$JQ"'))->toBe(4);
 });
 
 it('a Codex-provider event can resolve identity via a provider-scoped active file, not just Claude events', function () {
@@ -991,20 +992,33 @@ test('both installers whitelist exactly the eleven allowed fields', function (st
     'ps1' => ['/install.ps1'],
 ]);
 
-test('only the four handled hook events are registered', function (string $url) {
+test('only the five handled hook events are registered', function (string $url) {
     // EventController handles session-start, user-prompt-submit/pre-invocation,
-    // pre-tool-use and stop. PostToolUse, SubagentStop, SessionEnd and
-    // Notification fell through to a bare 201 -- and PostToolUse is both the
-    // highest-frequency event and the one carrying tool_response, so not
-    // registering it stops that content at the source rather than filtering it.
+    // pre-tool-use, stop, and subagent-stop (SubagentStop's transcript_path
+    // points at the subagent's own file, so it reuses the same stop handling).
+    // PostToolUse, SessionEnd and Notification still fall through to a bare
+    // 201 -- and PostToolUse is both the highest-frequency event and the one
+    // carrying tool_response, so not registering it stops that content at
+    // the source rather than filtering it.
     $script = $this->get($url)->assertOk()->getContent();
 
     // Assert on the registration list itself. A bare not->toContain of a name
     // would also match the line that REMOVES a stale registration.
-    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]')
+    expect($script)->toContain('events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "SubagentStop"]')
         ->and($script)->not->toContain('"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"')
         ->and($script)->not->toContain('"Stop", "SubagentStop", "SessionEnd", "Notification"')
         ->and($script)->not->toContain('for event in ["PreToolUse", "PostToolUse"]:');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the SubagentStop hook combines the parent session_id with agent_id before sending', function (string $url) {
+    // SubagentStop's session_id is the PARENT session's id, not unique per
+    // subagent (verified against the official hook payload docs) -- without
+    // this, every subagent's Event would be indistinguishable from the
+    // parent session's own Stop events sharing the same session_id.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('.hook_event_name == "SubagentStop"')
+        ->and($script)->toContain('.session_id = ((.session_id // "") + ":" + .agent_id)');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
 
 test('stale registrations are stripped from every event, not just the kept ones', function (string $url) {
