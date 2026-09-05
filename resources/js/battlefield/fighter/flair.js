@@ -35,3 +35,18 @@ export function isFlairActive(state, now) {
 export function clearFlair() {
   return createFlairState();
 }
+
+/**
+ * The duration a flair badge should stay up: the server-broadcast per-model
+ * value when it is a real positive number, otherwise the client's own
+ * fallback constant. The server decides which models get flair at all and for
+ * how long -- this only guards against a missing or malformed value, it never
+ * overrides a valid one.
+ *
+ * @param {?number} payloadDurationMs
+ * @param {number} fallbackMs
+ * @returns {number}
+ */
+export function resolveFlairDuration(payloadDurationMs, fallbackMs) {
+  return typeof payloadDurationMs === 'number' && payloadDurationMs > 0 ? payloadDurationMs : fallbackMs;
+}

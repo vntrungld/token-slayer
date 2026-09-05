@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clearFlair, createFlairState, isFlairActive, startFlair } from '../../resources/js/battlefield/fighter/flair.js';
+import { clearFlair, createFlairState, isFlairActive, resolveFlairDuration, startFlair } from '../../resources/js/battlefield/fighter/flair.js';
 
 describe('flair lifecycle', () => {
   it('is inactive until a flair starts', () => {
@@ -42,5 +42,25 @@ describe('flair lifecycle', () => {
     const original = createFlairState();
     startFlair(original, 'fable', 1000, 6000);
     expect(isFlairActive(original, 1500)).toBe(false);
+  });
+});
+
+describe('resolveFlairDuration', () => {
+  it('uses the server-supplied per-model duration when present', () => {
+    // Duration is now per-model admin config broadcast on the payload, not a
+    // fixed constant -- a model configured for 9000ms must not be clamped to
+    // whatever the client's own fallback happens to be.
+    expect(resolveFlairDuration(9000, 6000)).toBe(9000);
+  });
+
+  it('falls back to the client default when the payload carries none', () => {
+    // An older cached client, or a flair with no configured duration.
+    expect(resolveFlairDuration(null, 6000)).toBe(6000);
+    expect(resolveFlairDuration(undefined, 6000)).toBe(6000);
+  });
+
+  it('falls back on a non-positive duration rather than trusting it blindly', () => {
+    expect(resolveFlairDuration(0, 6000)).toBe(6000);
+    expect(resolveFlairDuration(-500, 6000)).toBe(6000);
   });
 });

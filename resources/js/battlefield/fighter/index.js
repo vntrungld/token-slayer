@@ -7,7 +7,7 @@ import { planRoute } from '@battlefield/move-geometry.js';
 import { resolveFighterPlacement } from '@battlefield/fighter-placement.js';
 import { driftedPositions } from '@battlefield/resync.js';
 import { loadAvatarTexture, makeFallbackAvatarTexture } from './avatar.js';
-import { clearFlair, createFlairState, isFlairActive, startFlair } from './flair.js';
+import { clearFlair, createFlairState, isFlairActive, resolveFlairDuration, startFlair } from './flair.js';
 
 // Tiny RPG sprite geometry constants — do not change without re-measuring the atlas.
 const SPRITE_CHAR_HEIGHT = 18;
@@ -454,11 +454,15 @@ export class Fighter {
    *
    * @param {object} fighter
    * @param {?string} flair
+   * @param {?number} flairDurationMs  server-broadcast duration for this model,
+   *   or null to fall back to the client default (an older cached client, or a
+   *   flair with no configured duration)
    * @return {void}
    */
-  applyFlair(fighter, flair) {
+  applyFlair(fighter, flair, flairDurationMs) {
     const now = this.scene.time.now;
-    fighter.flairState = startFlair(fighter.flairState ?? createFlairState(), flair, now, TIMINGS.flairDurationMs);
+    const durationMs = resolveFlairDuration(flairDurationMs, TIMINGS.flairDurationMs);
+    fighter.flairState = startFlair(fighter.flairState ?? createFlairState(), flair, now, durationMs);
 
     if (!isFlairActive(fighter.flairState, now)) {
       return;
@@ -490,7 +494,7 @@ export class Fighter {
     if (fighter.flairTimer) {
       fighter.flairTimer.remove();
     }
-    fighter.flairTimer = this.scene.time.delayedCall(TIMINGS.flairDurationMs, () => this.destroyFlair(fighter));
+    fighter.flairTimer = this.scene.time.delayedCall(durationMs, () => this.destroyFlair(fighter));
   }
 
   /**
@@ -696,7 +700,7 @@ export class Fighter {
     this.scene.charge?.clearCharge?.(payload.user_id);
     const fighter = this.scene.fighters.get(payload.user_id);
     if (fighter) {
-      this.applyFlair(fighter, payload.flair ?? null);
+      this.applyFlair(fighter, payload.flair ?? null, payload.flair_duration_ms ?? null);
       this.scene.tweens.killTweensOf(fighter.sprite);
       if (fighter.handle) this.scene.tweens.killTweensOf(fighter.handle);
       fighter.pos = { x: fighter.sprite.x, y: fighter.sprite.y };
