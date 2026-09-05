@@ -7,6 +7,7 @@ use App\Filament\Pages\Dashboard;
 use App\Filament\Resources\Shield\RoleResource;
 use App\Filament\Widgets\ActivityHeatmap;
 use App\Filament\Widgets\FleetQuotaOverview;
+use App\Filament\Widgets\TokensByModelChart;
 use App\Filament\Widgets\TokenVolumeChart;
 use App\Filament\Widgets\TopAccountsLeaderboard;
 use App\Filament\Widgets\TopUsersLeaderboard;
@@ -96,6 +97,7 @@ class AdminPanelProvider extends PanelProvider
                 FleetQuotaOverview::class,
                 ActivityHeatmap::class,
                 TokenVolumeChart::class,
+                TokensByModelChart::class,
                 TopUsersLeaderboard::class,
                 TopAccountsLeaderboard::class,
             ])
