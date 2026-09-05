@@ -845,6 +845,71 @@ test('both installers merge the usage object without nesting tokens', function (
     'ps1' => ['/install.ps1'],
 ]);
 
+test('both installers retry the transcript read once instead of trusting a zero-token first read', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // Claude Code fires Stop before the final assistant message is
+    // guaranteed flushed to disk. A first read of tokens=0 must not be
+    // trusted outright -- it must be re-attempted a bounded number of times
+    // before the body is sent.
+    expect($script)->toContain('extract_usage')
+        ->and($script)->toContain('sleep 0.3');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers only accept a retried read once two consecutive reads agree', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // Two consecutive identical non-zero reads mean nothing was appended to
+    // the transcript between them -- the write has settled. Comparing the
+    // full USAGE string (not just the token count) means a boundary shift
+    // into a different turn's models is caught too, since it would change
+    // the models object even if the token count coincided.
+    expect($script)->toContain('"$USAGE" = "$PREV"');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers do not retry when the first transcript read already sees tokens', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // A first read that already sees tokens>0 must be trusted immediately --
+    // no added latency for the case that already works today. Only a
+    // zero-token first read enters the retry branch.
+    expect($script)->toContain('if [ "${TOK:-0}" = "0" ]; then');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers cap the transcript re-read retry so a stuck flush cannot hang the hook', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('"$ATTEMPT" -lt 5');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
+test('both installers dedupe a single API message split across multiple content-block rows before summing tokens', function (string $url) {
+    $script = $this->get($url)->assertOk()->getContent();
+
+    // Claude Code writes one JSONL row per content-block type (thinking,
+    // tool_use, text) for a single API message, and every row repeats that
+    // message's FULL output_tokens -- verified live via message.id: two
+    // rows sharing the same id are the same underlying call. Summing every
+    // row without deduping double-counts (or worse) any turn that used
+    // extended thinking, which is common.
+    expect($script)->toContain('$mid')
+        ->and($script)->toContain('.seen[$mid]');
+})->with([
+    'sh' => ['/install'],
+    'ps1' => ['/install.ps1'],
+]);
+
 test('both installers dispatch a Codex-shaped walk for codex', function (string $url) {
     $script = $this->get($url)->assertOk()->getContent();
 
@@ -1070,4 +1135,3 @@ test('the installer verifies the wheel before pip installs it', function (string
     expect($script)->toContain('SLAYER_EXPECTED_WHEEL_SHA')
         ->and($script)->toContain('wheel checksum mismatch');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
-

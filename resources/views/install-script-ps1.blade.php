@@ -397,44 +397,97 @@ if [ -x "$JQ" ]; then
     # it returns 0, which is why Codex ingestion was silently dead from
     # 2026-06-28. antigravity deliberately keeps the Claude walk: its shape is
     # unverified and must not change here.
-    if [ "${PROVIDER:-}" = "codex" ]; then
-      USAGE=$("$JQ" -sr '
-        . as $a
-        | (length - 1) as $end
-        | reduce range($end; -1; -1) as $i ({t:0, k:null, stop:false};
-            if .stop then . else
-              ($a[$i]) as $e
-              | if $e.type == "event_msg" and $e.payload.type == "token_count" then
-                  .t += ($e.payload.info.last_token_usage.output_tokens // 0)
-                elif $e.type == "turn_context" then
-                  .k = (.k // $e.payload.model)
-                elif $e.type == "event_msg" and $e.payload.type == "task_started" then
-                  .stop = true
-                else . end
-            end)
-        | {tokens: .t, models: (if (.k != null and .t > 0) then {(.k): .t} else {} end)}
-      ' "$TRANSCRIPT" 2>/dev/null)
-    else
-    USAGE=$("$JQ" -sr '
-      . as $a
-      | (length - 1) as $end
-      | reduce range($end; -1; -1) as $i ({t:0, m:{}, stop:false};
-          if .stop then . else
-            ($a[$i]) as $e
-            | if $e.type == "assistant" or $e.type == "PLANNER_RESPONSE" or $e.source == "MODEL" then
-                (($e.message.usage.output_tokens // $e.usage.output_tokens // $e.usage.outputTokens // 0)) as $tok
-                | (($e.message.model // $e.model) // null) as $k
-                | .t += $tok
-                | (if $tok > 0 and $k != null then .m[$k] += $tok else . end)
-              elif ($e.type == "USER_INPUT" or $e.source == "USER_EXPLICIT") then
-                .stop = true
-              elif $e.type == "user"
-                   and ((try $e.message.content[0].type catch null) != "tool_result") then
-                .stop = true
-              else . end
-          end)
-      | {tokens: .t, models: .m}
-    ' "$TRANSCRIPT" 2>/dev/null)
+    #
+    # The Claude walk dedupes by message.id ($mid): when a single API
+    # response mixes content-block types (e.g. thinking + tool_use, or
+    # thinking + text), Claude Code writes ONE JSONL row per block type but
+    # repeats that message's full output_tokens on every row -- verified via
+    # two rows sharing the same message.id. Summing every assistant row
+    # blindly double-counts (or worse, with 3+ block types) any turn that
+    # used extended thinking, which is common. A row with no id (an
+    # unverified shape from PLANNER_RESPONSE/MODEL sources) is never
+    # deduped, matching the pre-dedup behavior for those.
+    extract_usage() {
+      if [ "${PROVIDER:-}" = "codex" ]; then
+        "$JQ" -sr '
+          . as $a
+          | (length - 1) as $end
+          | reduce range($end; -1; -1) as $i ({t:0, k:null, stop:false};
+              if .stop then . else
+                ($a[$i]) as $e
+                | if $e.type == "event_msg" and $e.payload.type == "token_count" then
+                    .t += ($e.payload.info.last_token_usage.output_tokens // 0)
+                  elif $e.type == "turn_context" then
+                    .k = (.k // $e.payload.model)
+                  elif $e.type == "event_msg" and $e.payload.type == "task_started" then
+                    .stop = true
+                  else . end
+              end)
+          | {tokens: .t, models: (if (.k != null and .t > 0) then {(.k): .t} else {} end)}
+        ' "$TRANSCRIPT" 2>/dev/null
+      else
+        "$JQ" -sr '
+          . as $a
+          | (length - 1) as $end
+          | reduce range($end; -1; -1) as $i ({t:0, m:{}, seen:{}, stop:false};
+              if .stop then . else
+                ($a[$i]) as $e
+                | if $e.type == "assistant" or $e.type == "PLANNER_RESPONSE" or $e.source == "MODEL" then
+                    ($e.message.id // $e.id // null) as $mid
+                    | if ($mid != null and (.seen[$mid] // false)) then .
+                      else
+                        (($e.message.usage.output_tokens // $e.usage.output_tokens // $e.usage.outputTokens // 0)) as $tok
+                        | (($e.message.model // $e.model) // null) as $k
+                        | .t += $tok
+                        | (if $tok > 0 and $k != null then .m[$k] += $tok else . end)
+                        | (if $mid != null then .seen[$mid] = true else . end)
+                      end
+                  elif ($e.type == "USER_INPUT" or $e.source == "USER_EXPLICIT") then
+                    .stop = true
+                  elif $e.type == "user"
+                       and ((try $e.message.content[0].type catch null) != "tool_result") then
+                    .stop = true
+                  else . end
+              end)
+          | {tokens: .t, models: .m}
+        ' "$TRANSCRIPT" 2>/dev/null
+      fi
+    }
+
+    # Claude Code fires Stop before the final assistant message is
+    # guaranteed flushed to disk; reading right away can see a truncated
+    # file and compute tokens=0, silently dropping the whole turn (the
+    # server only creates an Event when tokens>0 -- a zero read is never
+    # retried server-side). A first read that already sees tokens>0 is
+    # trusted immediately with no added latency, unchanged from before.
+    # Only a zero first read is retried: reread the same file every 300ms,
+    # up to 5 extra times (~1.5s), until two CONSECUTIVE reads agree on a
+    # non-zero result. The transcript is append-only, so identical output
+    # twice in a row means nothing landed between the two reads -- it has
+    # settled. Two consecutive zeros do NOT count as agreement: a
+    # still-flushing file reads zero every time until the write lands, so
+    # zero must exhaust the full retry budget rather than being accepted
+    # early. Comparing the whole USAGE string (not just the token count)
+    # also catches a boundary shift into a different turn's models, since
+    # that would change the models object even if the count coincided --
+    # and reading a genuinely later turn would require a full
+    # prompt-to-response round trip inside this same short window, which
+    # does not happen in practice.
+    USAGE=$(extract_usage)
+    TOK=$(printf '%s' "$USAGE" | "$JQ" -r '.tokens // 0' 2>/dev/null)
+    if [ "${TOK:-0}" = "0" ]; then
+      PREV="$USAGE"
+      ATTEMPT=0
+      while [ "$ATTEMPT" -lt 5 ]; do
+        sleep 0.3
+        USAGE=$(extract_usage)
+        TOK=$(printf '%s' "$USAGE" | "$JQ" -r '.tokens // 0' 2>/dev/null)
+        ATTEMPT=$((ATTEMPT + 1))
+        if [ "${TOK:-0}" != "0" ] && [ "$USAGE" = "$PREV" ]; then
+          break
+        fi
+        PREV="$USAGE"
+      done
     fi
     case "$USAGE" in
       '{'*) BODY=$(printf '%s' "$BODY" | "$JQ" -c --argjson u "$USAGE" '. + $u' 2>/dev/null || printf '%s' "$BODY") ;;
