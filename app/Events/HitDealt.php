@@ -19,6 +19,8 @@ class HitDealt implements ShouldBroadcastNow
      * @param  Boss  $boss  the boss after the hit landed
      * @param  ?string  $model  raw model id that produced the turn, when known
      * @param  ?string  $flair  flair key the model earns, or null for none
+     * @param  ?int  $flairDurationMs  how long the flair badge stays up, or
+     *                                 null when there is no flair
      */
     public function __construct(
         public User $user,
@@ -26,6 +28,7 @@ class HitDealt implements ShouldBroadcastNow
         public Boss $boss,
         public ?string $model = null,
         public ?string $flair = null,
+        public ?int $flairDurationMs = null,
     ) {}
 
     /**
@@ -56,6 +59,7 @@ class HitDealt implements ShouldBroadcastNow
             'boss_max_hp' => $this->boss->max_hp,
             'model' => $this->model,
             'flair' => $this->flair,
+            'flair_duration_ms' => $this->flairDurationMs,
         ];
     }
 }

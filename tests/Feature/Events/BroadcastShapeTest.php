@@ -167,29 +167,31 @@ test('FighterCharacterChanged broadcasts on the battlefield channel with the use
         ]);
 });
 
-test('HitDealt carries a nullable model and flair', function () {
-    // Both must be nullable end to end: HitDealt is also dispatched for
+test('HitDealt carries a nullable model, flair, and flair duration', function () {
+    // All three must be nullable end to end: HitDealt is also dispatched for
     // cowork/claude-ai Stops, where no model exists at all.
     $user = User::factory()->create();
     $boss = Boss::factory()->create(['number' => 1]);
 
     $plain = (new HitDealt($user, 100, $boss))->broadcastWith();
 
-    expect($plain)->toHaveKeys(['model', 'flair'])
+    expect($plain)->toHaveKeys(['model', 'flair', 'flair_duration_ms'])
         ->and($plain['model'])->toBeNull()
-        ->and($plain['flair'])->toBeNull();
+        ->and($plain['flair'])->toBeNull()
+        ->and($plain['flair_duration_ms'])->toBeNull();
 
-    $fable = (new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable'))->broadcastWith();
+    $fable = (new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000))->broadcastWith();
 
     expect($fable['model'])->toBe('claude-fable-5-1')
-        ->and($fable['flair'])->toBe('fable');
+        ->and($fable['flair'])->toBe('fable')
+        ->and($fable['flair_duration_ms'])->toBe(9000);
 });
 
 test('HitDealt sends only scalars, per the payload rule', function () {
     $user = User::factory()->create();
     $boss = Boss::factory()->create(['number' => 1]);
 
-    foreach ((new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable'))->broadcastWith() as $key => $value) {
+    foreach ((new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000))->broadcastWith() as $key => $value) {
         expect(is_scalar($value) || $value === null)->toBeTrue("payload key {$key} is not a scalar");
     }
 });

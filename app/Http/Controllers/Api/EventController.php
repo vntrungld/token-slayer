@@ -116,7 +116,15 @@ class EventController extends Controller
                     $this->dispatchSafely(new BossSpawned($result->boss));
                 }
 
-                $this->dispatchSafely(new HitDealt($user, $tokens, $result->boss, $model, $this->flair->resolve($model)));
+                $flairDecision = $this->flair->resolve($model);
+                $this->dispatchSafely(new HitDealt(
+                    $user,
+                    $tokens,
+                    $result->boss,
+                    $model,
+                    $flairDecision?->flair,
+                    $flairDecision?->durationMs,
+                ));
 
                 if ($activityLabel !== null) {
                     // Dispatched after HitDealt: the client clears the charge

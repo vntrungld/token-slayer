@@ -7,6 +7,7 @@ use App\Events\FighterCharging;
 use App\Events\FighterJoined;
 use App\Events\HitDealt;
 use App\Models\Account;
+use App\Models\AiModel;
 use App\Models\Boss;
 use App\Models\Event;
 use App\Models\User;
@@ -662,8 +663,8 @@ test('leaves the stored hook version alone when a stale client omits it', functi
     expect($this->user->fresh()->hook_version)->toBe('6');
 });
 
-test('a Fable turn broadcasts its flair, an Opus turn does not', function () {
-    config(['game.flair_models' => ['claude-fable']]);
+test('a Fable turn broadcasts its flair and duration, an Opus turn does not', function () {
+    AiModel::create(['model' => 'claude-fable-5-1', 'flair_enabled' => true, 'flair_duration_ms' => 9000]);
     Illuminate\Support\Facades\Event::fake([HitDealt::class]);
 
     $this->withHeader('Authorization', 'Bearer tok')
@@ -681,9 +682,9 @@ test('a Fable turn broadcasts its flair, an Opus turn does not', function () {
         ])->assertCreated();
 
     Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
-        fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable');
+        fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable' && $e->flairDurationMs === 9000);
     Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
-        fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null);
+        fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null && $e->flairDurationMs === null);
 });
 
 test('the ingest response tells the client what to be on and whether to hold', function () {
