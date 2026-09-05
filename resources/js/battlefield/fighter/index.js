@@ -475,26 +475,112 @@ export class Fighter {
       const head = fighter.head;
       const y = (head?.y ?? 0) - (head?.displayHeight ?? 28) / 2 - 10;
       fighter.flairBadge = this.scene.add.text(0, y, fighter.flairState.flair.toUpperCase(), {
-        fontFamily: 'monospace', fontSize: '10px', color: '#fbbf24',
-        backgroundColor: '#00000099', padding: { x: 4, y: 1 },
+        fontFamily: 'monospace', fontSize: '11px', color: '#fde68a',
+        stroke: '#78350f', strokeThickness: 3,
+        backgroundColor: '#00000066', padding: { x: 5, y: 2 },
       }).setOrigin(0.5, 1);
       fighter.sprite?.add?.(fighter.flairBadge);
     }
 
-    fighter.flairBadge.setText(fighter.flairState.flair.toUpperCase()).setAlpha(1);
+    fighter.flairBadge.setText(fighter.flairState.flair.toUpperCase()).setAlpha(1).setScale(0);
     this.scene.tweens.killTweensOf(fighter.flairBadge);
-    fighter.flairBlink = this.scene.tweens.add({
+
+    // Bounce in on every triggering hit, not just the first -- each Fable hit
+    // is meant to feel like its own small celebration. Back.easeOut gives the
+    // overshoot-then-settle "nảy vào" in one tween, so no manual scale steps.
+    this.scene.tweens.add({
       targets: fighter.flairBadge,
-      alpha: 0.15,
-      duration: TIMINGS.flairBlinkMs,
-      yoyo: true,
-      repeat: -1,
+      scale: 1,
+      duration: 380,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        if (!fighter.flairBadge?.scene) {
+          return;
+        }
+        // A gentle scale "breathe" once settled, replacing the old hard
+        // alpha 1<->0.15 blink: a scale pulse doesn't swing luminance the way
+        // an alpha flash does, so it reads as calmer at the same cadence.
+        fighter.flairBlink = this.scene.tweens.add({
+          targets: fighter.flairBadge,
+          scale: 1.08,
+          duration: TIMINGS.flairBlinkMs,
+          yoyo: true,
+          repeat: -1,
+        });
+      },
     });
+
+    this.burstFlair(fighter);
 
     if (fighter.flairTimer) {
       fighter.flairTimer.remove();
     }
     fighter.flairTimer = this.scene.time.delayedCall(durationMs, () => this.destroyFlair(fighter));
+  }
+
+  /**
+   * One-shot "toả ra" burst that plays alongside every triggering flair hit:
+   * two staggered rings expanding from the fighter's feet, plus a handful of
+   * sparkles bursting upward. Purely decorative and self-cleaning — nothing
+   * here is tracked on `fighter` beyond a `flairBurstAt` timestamp, used only
+   * to skip re-bursting when a hit lands while the previous burst (≤850ms) is
+   * still animating — realistic hit cadence is seconds apart, so this only
+   * guards a pathological run of hits from stacking unbounded Graphics/
+   * particle objects, and never affects the badge itself.
+   *
+   * @param {object} fighter
+   * @return {void}
+   */
+  burstFlair(fighter) {
+    const now = this.scene.time.now;
+    if (fighter.flairBurstAt && now - fighter.flairBurstAt < 300) {
+      return;
+    }
+    fighter.flairBurstAt = now;
+
+    const footY = Math.round((fighter.baseSize ?? 48) / 2.2);
+    const ringRadius = Math.max(10, Math.round((fighter.baseSize ?? 48) * 0.22));
+
+    [0, 100].forEach(delayMs => {
+      this.scene.time.delayedCall(delayMs, () => {
+        if (!fighter.sprite?.scene) {
+          return;
+        }
+        const ring = this.scene.add.graphics();
+        ring.lineStyle(2, 0xfbbf24, 0.9);
+        ring.strokeCircle(0, 0, ringRadius);
+        ring.setPosition(0, footY);
+        fighter.sprite.add(ring);
+        this.scene.tweens.add({
+          targets: ring,
+          scaleX: 2,
+          scaleY: 2,
+          alpha: 0,
+          duration: 600,
+          ease: 'Sine.easeOut',
+          onComplete: () => { if (ring.scene) ring.destroy(); },
+        });
+      });
+    });
+
+    if (!fighter.pos) {
+      return;
+    }
+    const emitter = this.scene.add.particles(fighter.pos.x, fighter.pos.y + footY, TextureKey.SPARK, {
+      tint: { onEmit: () => Phaser.Math.RND.pick([0xfde68a, 0xfbbf24, 0xf59e0b]) },
+      scale: { start: 0.6, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      speedX: { min: -30, max: 30 },
+      speedY: { min: -90, max: -40 },
+      lifespan: { min: 500, max: 750 },
+      blendMode: Phaser.BlendModes.ADD,
+    });
+    // Matches charge.js's feet-level emitters, which explicitly layer at
+    // depth 1 (below the fighter container's depth 2) rather than the
+    // default depth 0.
+    emitter.setDepth(1);
+    emitter.explode(8);
+    this.scene.time.delayedCall(850, () => { if (emitter.scene) emitter.destroy(); });
   }
 
   /**
@@ -700,11 +786,14 @@ export class Fighter {
     this.scene.charge?.clearCharge?.(payload.user_id);
     const fighter = this.scene.fighters.get(payload.user_id);
     if (fighter) {
-      this.applyFlair(fighter, payload.flair ?? null, payload.flair_duration_ms ?? null);
       this.scene.tweens.killTweensOf(fighter.sprite);
       if (fighter.handle) this.scene.tweens.killTweensOf(fighter.handle);
+      // fighter.pos must be current before applyFlair: its burst places a
+      // world-space particle emitter at fighter.pos, and a fighter mid-move
+      // would otherwise get its spark burst rendered at a stale position.
       fighter.pos = { x: fighter.sprite.x, y: fighter.sprite.y };
       fighter.waypointMoving = false;
+      this.applyFlair(fighter, payload.flair ?? null, payload.flair_duration_ms ?? null);
     }
     const key     = fighter?.ftype?.key ?? null;
     const attacks = fighter?.ftype?.attacks ?? null;
