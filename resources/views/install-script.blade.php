@@ -175,7 +175,17 @@ if [ -x "$JQ" ]; then
 fi
 
 if [ -x "$JQ" ]; then
-  TRANSCRIPT=$(printf '%s' "$BODY" | "$JQ" -r '.transcript_path // .transcriptPath // ""' 2>/dev/null)
+  # Verified live: a SubagentStop's top-level transcript_path is the PARENT
+  # session's file -- present on every hook event, never subagent-specific.
+  # The subagent's OWN transcript only lives under agent_transcript_path.
+  # Reading transcript_path here would silently re-walk the parent's last
+  # turn instead of the subagent's, attributing the parent's tokens/model to
+  # a fake "subagent" session_id instead of the real (usually much smaller)
+  # subagent usage.
+  TRANSCRIPT=$(printf '%s' "$BODY" | "$JQ" -r '
+    if .hook_event_name == "SubagentStop" then (.agent_transcript_path // "")
+    else (.transcript_path // .transcriptPath // "") end
+  ' 2>/dev/null)
   if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
     # Emits {tokens, models}. The capture and the merge below MUST change
     # together: with the old scalar merge this object would be nested under

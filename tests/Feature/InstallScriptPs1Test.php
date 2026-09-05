@@ -177,7 +177,7 @@ it('never falls back to a system jq inside the Windows hook -- every jq call res
         ->toContain('JQ="$HOME/.config/__TS_NAMESPACE__/bin/jq.exe"');
 
     $resolverPos = strpos($script, 'JQ="$HOME/.config/__TS_NAMESPACE__/bin/jq.exe"');
-    $firstJqCallPos = strpos($script, '"$JQ" -r \'.transcript_path');
+    $firstJqCallPos = strpos($script, '"$JQ" -r \'');
     expect($resolverPos)->not->toBeFalse()
         ->and($firstJqCallPos)->not->toBeFalse()
         ->and($resolverPos)->toBeLessThan($firstJqCallPos);

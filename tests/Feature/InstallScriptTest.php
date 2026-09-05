@@ -767,7 +767,7 @@ it('never falls back to a system jq inside the hook -- every jq call resolves to
     // The resolver is declared before BODY is read and before the first jq
     // call site (transcript token enrichment).
     $resolverPos = strpos($script, 'JQ="$HOME/.config/token_slayer/bin/jq"');
-    $firstJqCallPos = strpos($script, '"$JQ" -r \'.transcript_path');
+    $firstJqCallPos = strpos($script, '"$JQ" -r \'');
     expect($resolverPos)->not->toBeFalse()
         ->and($firstJqCallPos)->not->toBeFalse()
         ->and($resolverPos)->toBeLessThan($firstJqCallPos);
@@ -1019,6 +1019,20 @@ test('the SubagentStop hook combines the parent session_id with agent_id before 
 
     expect($script)->toContain('.hook_event_name == "SubagentStop"')
         ->and($script)->toContain('.session_id = ((.session_id // "") + ":" + .agent_id)');
+})->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
+
+test('the SubagentStop hook reads agent_transcript_path, not the parent transcript_path', function (string $url) {
+    // Verified live: SubagentStop's top-level transcript_path is the PARENT
+    // session's file (present on every hook event, not subagent-specific) --
+    // the subagent's OWN transcript only lives under agent_transcript_path.
+    // Reading transcript_path here silently re-walks the parent's own last
+    // turn instead of the subagent's, attributing the parent's tokens/model
+    // to a fake "subagent" session_id instead of the tiny real subagent
+    // usage.
+    $script = $this->get($url)->assertOk()->getContent();
+
+    expect($script)->toContain('if .hook_event_name == "SubagentStop" then (.agent_transcript_path // "")')
+        ->and($script)->toContain('else (.transcript_path // .transcriptPath // "") end');
 })->with(['sh' => ['/install'], 'ps1' => ['/install.ps1']]);
 
 test('stale registrations are stripped from every event, not just the kept ones', function (string $url) {
