@@ -81,6 +81,15 @@ export class BattlefieldScene extends Phaser.Scene {
     this.layout = LAYOUTS[this.mode];
     const L = this.layout;
 
+    // The canvas is created at logical size * renderScale (see index.js's
+    // renderScaleFor) purely for pixel density; zooming the camera by the
+    // same factor keeps the whole scene authored in logical coordinates.
+    // centerOn is required: with zoom alone the camera's view stays anchored
+    // on its own midpoint, which would show the wrong half of the world.
+    const renderScale = this.game.registry.get('renderScale') ?? 1;
+    this.cameras.main.setZoom(renderScale);
+    this.cameras.main.centerOn(L.logicalWidth / 2, L.logicalHeight / 2);
+
     this.add.rectangle(L.logicalWidth / 2, L.logicalHeight / 2, L.logicalWidth, L.logicalHeight, BG_COLOR);
     ensureSparkTexture(this);
     this.add.image(L.logicalWidth / 2, L.logicalHeight / 2, this.makeVignetteTexture());

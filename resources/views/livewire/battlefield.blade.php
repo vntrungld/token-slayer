@@ -310,8 +310,12 @@
                 fitToCanvas() {
                     const bf = window.__battlefield;
                     const canvas = bf?.game?.canvas;
-                    const gameSize = bf?.game?.scale?.gameSize;
-                    const logicalW = gameSize?.width;
+                    // The AUTHORED width (960/540), not game.scale.gameSize:
+                    // the canvas is deliberately created at logical size
+                    // times renderScale for pixel density (see index.js), so
+                    // scaling against the canvas size would shrink this HUD
+                    // by that same factor.
+                    const logicalW = bf?.logicalWidth ?? bf?.game?.scale?.gameSize?.width;
                     if (!canvas || !logicalW) {
                         return;
                     }

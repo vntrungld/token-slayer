@@ -35,20 +35,24 @@ export class MoveInput {
 
     let debounceTimer = null;
 
+    // worldX/worldY, not x/y: the camera is zoomed by renderScale (see
+    // scene.js), so pointer.x/y are canvas pixels while every layout
+    // constant and sprite position here is in logical world units. They were
+    // interchangeable only while the camera sat at zoom 1.
     this.scene.input.on('pointerdown', pointer => {
-      if (isInsideLeaderboardPanel(pointer.x, pointer.y, this.scene.layout)) {
+      if (isInsideLeaderboardPanel(pointer.worldX, pointer.worldY, this.scene.layout)) {
         return;
       }
 
       // Always show ripple at click point
-      this._spawnClickRipple(pointer.x, pointer.y);
+      this._spawnClickRipple(pointer.worldX, pointer.worldY);
 
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         const entry = this.scene.fighters.get(this.scene.currentUserId);
         if (entry?.isStunned) return;
-        const from  = entry?.sprite ? { x: entry.sprite.x, y: entry.sprite.y } : { x: pointer.x, y: pointer.y };
-        const route = this._planRoute(from.x, from.y, pointer.x, pointer.y);
+        const from  = entry?.sprite ? { x: entry.sprite.x, y: entry.sprite.y } : { x: pointer.worldX, y: pointer.worldY };
+        const route = this._planRoute(from.x, from.y, pointer.worldX, pointer.worldY);
         if (!route || route.length === 0) return;
 
         const final = route[route.length - 1];
@@ -75,7 +79,7 @@ export class MoveInput {
     });
 
     this.scene.input.on('pointermove', pointer => {
-      const overLeaderboard = isInsideLeaderboardPanel(pointer.x, pointer.y, this.scene.layout);
+      const overLeaderboard = isInsideLeaderboardPanel(pointer.worldX, pointer.worldY, this.scene.layout);
       this.scene.game.canvas.style.cursor = overLeaderboard ? 'default' : 'pointer';
     });
   }

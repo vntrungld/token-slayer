@@ -97,13 +97,40 @@ export function detectMode() {
   return window.innerWidth < window.innerHeight ? 'portrait' : 'landscape';
 }
 
+/**
+ * How many real canvas pixels to render per logical pixel.
+ *
+ * The scene is authored in a fixed logical coordinate space (960x540, see
+ * LAYOUTS) and Scale.FIT stretches that canvas to fill whatever space the
+ * page gives it. On a wide display that stretch is close to 2x -- measured
+ * live at 1863 CSS px for a 960px canvas -- so every pixel the game drew was
+ * being blown up nearly double, which is what made avatars (and everything
+ * else) look soft and blocky next to crisp pixel-art sprites.
+ *
+ * Rendering the canvas at `logical * scale` and zooming the camera by the
+ * same factor keeps every coordinate in the codebase logical while giving
+ * the renderer enough real pixels to land roughly 1:1 on screen. Derived
+ * from the space actually available (times devicePixelRatio) rather than
+ * fixed, so small screens don't pay for pixels they can't show; capped
+ * because past ~2.5x the cost stops buying visible sharpness.
+ *
+ * @param {HTMLElement} mount
+ * @param {{logicalWidth: number}} layout
+ * @return {number}
+ */
+function renderScaleFor(mount, layout) {
+  const available = (mount?.clientWidth || window.innerWidth) * (window.devicePixelRatio || 1);
+  return Math.min(2.5, Math.max(1, available / layout.logicalWidth));
+}
+
 function bootGame(mount, state, mode) {
   const layout = LAYOUTS[mode];
+  const renderScale = renderScaleFor(mount, layout);
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: mount,
-    width: layout.logicalWidth,
-    height: layout.logicalHeight,
+    width: Math.round(layout.logicalWidth * renderScale),
+    height: Math.round(layout.logicalHeight * renderScale),
     backgroundColor: BG_COLOR,
     pixelArt: false,
     antialias: true,
@@ -112,6 +139,7 @@ function bootGame(mount, state, mode) {
   });
   game.registry.set('initialState', state);
   game.registry.set('mode', mode);
+  game.registry.set('renderScale', renderScale);
 
   game.events.once('ready', () => {
     subscribeEcho();
@@ -121,6 +149,13 @@ function bootGame(mount, state, mode) {
       game,
       scene,
       get mode() { return game.registry.get('mode'); },
+      // The authored coordinate space, NOT game.scale.gameSize (which is now
+      // the higher-resolution canvas). Anything positioning DOM overlays
+      // against the canvas -- the Damage HUD in battlefield.blade.php --
+      // must scale against this, or it silently shrinks by renderScale.
+      logicalWidth: layout.logicalWidth,
+      logicalHeight: layout.logicalHeight,
+      renderScale,
       bossHp: () => scene.bossState?.currentHp,
       bossMaxHp: () => scene.bossState?.maxHp,
       computeHudTop,
