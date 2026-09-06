@@ -38,6 +38,7 @@ Fighter entry object (lives in `scene.fighters: Map<userId, entry>`):
   flairState,            // {flair, expiresAt} from fighter/flair.js, or undefined before the first flair hit
   flairColor,            // hex string for the active flair's orbit ring/burst, or null when no flair is active
   flairRing,             // Array<{ch, phase, text: Phaser.GameObjects.Text}> | null — the orbiting name-ring glyphs
+  flairSparkles,         // Array<{text, phase, speed, sizeScale}> | null — independently-twinkling sparkles orbiting wider than the ring
   flairRingTicker,       // Phaser.Time.TimerEvent | null — drives updateFlairRing() every 16ms while flairRing is active
   flairAngle,            // radians — the ring's current rotation, advanced each tick by updateFlairRing()
   flairLastBurstAt,      // timestamp (ms) of the last triggering hit — drives the post-hit spin-up (flair.js's spinMultiplier)

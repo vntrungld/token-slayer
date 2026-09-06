@@ -28,6 +28,22 @@ const SPRITE_CHAR_BOT    = 56;
 
 const HANDLE_MAX_CHARS = 12;
 
+// Matches boss/stun.js's own orbiting-star front depth (112) rather than
+// picking a fresh number: that effect has the exact same requirement (an
+// orbit that wraps a character and must stay visible above every game-world
+// VFX layer it could pass over) and is the established precedent for it.
+// Attack trails/beams/ghosts run 1.5-4 (attacks/*.js), projectiles run 9-10
+// and their trail emitters 9 (projectile.js), boss-reaction FX run 6
+// (boss/dreadknight.js) -- depth 5 alone (an earlier attempt at this fix)
+// cleared only the first group, so the ring could still be drawn over
+// during a melee attack's strike/impact phase, when the fighter ends up
+// positioned at the boss anchor alongside the projectile/impact depths.
+// 112 clears all of those with margin while staying below the UI-tier
+// overlays (activity bubble 100-101, tooltip 300-301 in bubble.js, the
+// post-kill MVP card 200-202 in leaderboard/mvp.js) that should always
+// render on top of any in-world character effect regardless.
+const FLAIR_RING_FRONT_DEPTH = 112;
+
 /** @param {string} handle @param {number} maxChars @return {string} */
 function truncateHandle(handle, maxChars = HANDLE_MAX_CHARS) {
   if (!handle || handle.length <= maxChars) {
@@ -538,14 +554,29 @@ export class Fighter {
     fighter.flairRing = buildRingChars(label).map(({ ch, phase }) => ({
       ch,
       phase,
+      // addSharpText (not plain scene.add.text): the resolution-doubled
+      // render this helper applies is what every other piece of battlefield
+      // text uses to stay crisp -- a bare add.text here rendered visibly
+      // blurrier than the rest of the scene.
       text: this.scene
-        .add.text(0, 0, ch, {
+        .addSharpText(0, 0, ch, {
           fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
           stroke: deep, strokeThickness: 2,
-        })
-        .setOrigin(0.5)
-        .setDepth(1),
+        }),
     }));
+
+    // A handful of independently-twinkling sparkles orbiting slightly wider
+    // than the name ring -- present in the approved design but missing from
+    // the first pass of this port.
+    fighter.flairSparkles = Array.from({ length: 5 }, () => ({
+      phase: Math.random() * Math.PI * 2,
+      speed: 0.85 + Math.random() * 0.7,
+      sizeScale: 0.75 + Math.random() * 0.45,
+      text: this.scene.addSharpText(0, 0, '✦', {
+        fontFamily: 'monospace', fontSize: `${Math.round(fontPx * 0.8)}px`, color: '#f8fafc',
+      }).setDepth(FLAIR_RING_FRONT_DEPTH),
+    }));
+
     fighter.flairAngle = 0;
     fighter.flairRingTicker = this.scene.time.addEvent({
       delay: 16,
@@ -555,13 +586,20 @@ export class Fighter {
   }
 
   /**
-   * Per-tick position/depth/scale update for one fighter's orbit ring.
-   * Advances the shared orbit angle by real elapsed time (not a fixed step),
-   * sped up by {@see spinMultiplier} right after a triggering hit, and
-   * places each glyph on an ellipse around the fighter: the near/front arc
-   * (sinA >= 0) renders full-size in front of the sprite, brightened further
-   * by {@see spotlightBoost} as it sweeps through the closest point; the far
-   * arc renders smaller and dimmer behind it.
+   * Per-tick position/depth/scale update for one fighter's orbit ring and
+   * its sparkles. Advances the shared orbit angle by real elapsed time (not
+   * a fixed step), sped up by {@see spinMultiplier} right after a
+   * triggering hit, and places each glyph on an ellipse around the fighter:
+   * the near/front arc (sinA >= 0) renders full-size in front of the
+   * sprite, brightened further by {@see spotlightBoost} as it sweeps
+   * through the closest point; the far arc renders smaller and dimmer
+   * behind it.
+   *
+   * The front depth ({@see FLAIR_RING_FRONT_DEPTH} — see its own comment
+   * for the full reasoning) keeps the ring/name visible above every combat
+   * VFX layer a fighter can pass through while attacking; at a lower depth
+   * it was getting drawn over during the dash and strike, which read as the
+   * flair "not following" the fighter.
    *
    * @param {object} fighter
    * @return {void}
@@ -590,9 +628,19 @@ export class Fighter {
       const back = sinA < 0;
       const boost = back ? 0 : spotlightBoost(a);
       text.setPosition(cx + Math.cos(a) * rx, cy + sinA * ry);
-      text.setDepth(back ? 1 : 3);
+      text.setDepth(back ? 1 : FLAIR_RING_FRONT_DEPTH);
       text.setScale((back ? 0.7 : 1) * (1 + 0.4 * boost));
       text.setAlpha(back ? 0.55 : 1);
+    });
+
+    const sparkleRx = rx + 12 * scale;
+    const sparkleRy = ry + 6 * scale;
+    fighter.flairSparkles?.forEach(s => {
+      const a = s.phase + now / (1500 / s.speed);
+      const twinkle = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(now / 240 + s.phase * 4));
+      s.text.setPosition(cx + Math.cos(a) * sparkleRx, cy + Math.sin(a) * sparkleRy);
+      s.text.setScale(s.sizeScale);
+      s.text.setAlpha(twinkle);
     });
   }
 
@@ -608,6 +656,8 @@ export class Fighter {
     fighter.flairRingTicker = null;
     fighter.flairRing?.forEach(({ text }) => { if (text.scene) text.destroy(); });
     fighter.flairRing = null;
+    fighter.flairSparkles?.forEach(({ text }) => { if (text.scene) text.destroy(); });
+    fighter.flairSparkles = null;
   }
 
   /**
@@ -694,7 +744,7 @@ export class Fighter {
   burstCorePop(fighter, colorInt, footY) {
     const core = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, 5, 0xffffff, 1);
     core.setBlendMode(Phaser.BlendModes.ADD);
-    core.setDepth(2);
+    core.setDepth(1); // behind the character, matching the approved artifact design
     this.scene.tweens.add({
       targets: core,
       scale: 7,
@@ -734,7 +784,7 @@ export class Fighter {
 
     const g = this.scene.add.graphics();
     g.setBlendMode(Phaser.BlendModes.ADD);
-    g.setDepth(2);
+    g.setDepth(1); // behind the character, matching the approved artifact design
 
     const draw = (growth, fade) => {
       g.clear();
