@@ -26,12 +26,16 @@
     evaluated directly by Alpine regardless of when the element was inserted,
     which is what actually makes this show up at all.
 
-    The drawing logic mirrors the real Phaser implementation in
-    resources/js/battlefield/fighter/index.js + flair.js (ring math, spotlight
-    sweep, additive burst) closely enough to give a faithful preview, but is
-    an independent, simplified canvas port -- it has no dependency on the
-    battlefield bundle and needs none of Phaser's scene/lifecycle machinery
-    for a one-off admin preview.
+    This is a 1:1 port of the approved artifact's canvas logic (ring math,
+    spotlight sweep, comet trail, sparkles, additive burst, screen flash,
+    shake, punch-scale) -- NOT the scoped-down version shipped in the real
+    Phaser game. Two things were deliberately toned down in the real game
+    for reasons that don't apply to this single-fighter admin preview:
+    a whole-canvas flash is fine here (no other fighters share this canvas
+    to flash for), and glow can vary live with the spotlight sweep every
+    frame here (plain canvas shadowBlur is cheap; Phaser's Text.setShadow
+    re-rasterizes the glyph's texture on every call, which is why the real
+    game sets it once instead -- see fighter/index.js's startFlairRing).
 --}}
 <div
     x-data="{
@@ -42,6 +46,11 @@
         lastFrameAt: null,
         lastBurstAt: -Infinity,
         bursts: [],
+        stars: Array.from({ length: 6 }, () => ({
+            phase: Math.random() * Math.PI * 2,
+            speed: 0.85 + Math.random() * 0.7,
+            r: 0.55 + Math.random() * 0.35,
+        })),
 
         start() {
             this.burst();
@@ -103,6 +112,20 @@
             return Math.max(0, Math.cos(d * 1.6));
         },
 
+        punchScale(now) {
+            const t = this.burstT(now);
+            if (t < 0 || t > 260) return 1;
+            const p = t / 260;
+            return 1 + 0.24 * Math.sin(p * Math.PI) * (1 - p * 0.25);
+        },
+
+        shakeOffset(now) {
+            const t = this.burstT(now);
+            if (t < 0 || t > 200) return { x: 0, y: 0 };
+            const mag = 5 * (1 - t / 200);
+            return { x: (Math.random() * 2 - 1) * mag, y: (Math.random() * 2 - 1) * mag };
+        },
+
         darkenHex(hex, amount) {
             const m = /^#?([0-9a-f]{6})$/i.exec(hex);
             if (!m) return '#000000';
@@ -124,9 +147,11 @@
             return chars;
         },
 
-        drawFighter(ctx, cx, cy) {
+        drawFighter(ctx, cx, cy, now) {
+            const s = this.punchScale(now);
             ctx.save();
             ctx.translate(cx, cy);
+            ctx.scale(s, s);
             ctx.beginPath();
             ctx.ellipse(0, 34, 20, 5, 0, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(0,0,0,.35)';
@@ -160,9 +185,70 @@
             ctx.restore();
         },
 
+        /** A short comet trail of fading echo dots behind one orbit glyph. */
+        drawTrail(ctx, cx, cy, phase, back) {
+            const rx = 40, ry = 15, headY = -4;
+            const TRAIL = 3, GAP = 0.05;
+            for (let k = TRAIL; k >= 1; k--) {
+                const a = this.angle + phase - k * GAP;
+                const sinA = Math.sin(a);
+                if ((sinA < 0) !== back) continue;
+                const x = cx + Math.cos(a) * rx;
+                const y = cy + headY + sinA * ry;
+                const alpha = (1 - k / (TRAIL + 1)) * (back ? 0.2 : 0.35);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(x, y, back ? 2 : 2.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        },
+
+        drawSparkles(ctx, cx, cy, now) {
+            const rx = 52, ry = 21, headY = -4;
+            this.stars.forEach(s => {
+                const a = s.phase + now / (1500 / s.speed);
+                const twinkle = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(now / 240 + s.phase * 4));
+                const x = cx + Math.cos(a) * rx;
+                const y = cy + headY + Math.sin(a) * ry;
+                ctx.save();
+                ctx.globalAlpha = twinkle;
+                ctx.fillStyle = '#f8fafc';
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.font = `${9 + 5 * s.r}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('✦', x, y);
+                ctx.restore();
+            });
+        },
+
+        /** Full-canvas flash on trigger -- fine here (single-fighter preview, no one else's screen to flash). */
+        drawFlash(ctx, now) {
+            const t = this.burstT(now);
+            if (t < 0 || t > 220) return;
+            const p = t / 220;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = (1 - p) * 0.5;
+            const grad = ctx.createRadialGradient(110, 122, 8, 110, 122, 160);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.32, this.color);
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 220, 220);
+            ctx.restore();
+        },
+
         drawRing(ctx, cx, cy, back) {
             const rx = 40, ry = 15, headY = -4;
             this.buildRingChars().forEach(({ ch, phase }) => {
+                this.drawTrail(ctx, cx, cy, phase, back);
                 const a = this.angle + phase;
                 const sinA = Math.sin(a);
                 if ((sinA < 0) !== back) return;
@@ -173,7 +259,8 @@
             });
         },
 
-        drawBurst(ctx, cx, cy, now) {
+        /** Core-pop + spokes -- drawn BEHIND the fighter (called before drawFighter in frame()). */
+        drawCorePopAndSpokes(ctx, cx, cy, now) {
             ctx.save();
             ctx.globalCompositeOperation = 'lighter';
             this.bursts.forEach(b => {
@@ -215,7 +302,10 @@
                 }
             });
             ctx.restore();
+        },
 
+        /** Shockwave rings + upward particles -- drawn IN FRONT of the fighter (called after drawFighter in frame()). */
+        drawRingsAndParticles(ctx, cx, cy, now) {
             ctx.save();
             this.bursts.forEach(b => {
                 const t = now - b.startedAt;
@@ -265,11 +355,25 @@
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, 220, 220);
             const cx = 110, cy = 122;
+            const shake = this.shakeOffset(now);
 
+            ctx.save();
+            ctx.translate(shake.x, shake.y);
+
+            // Core-pop + spokes sit BEHIND the fighter; the shockwave ring
+            // and upward particles sit IN FRONT -- matching the approved
+            // artifact's actual draw order exactly (they are not one
+            // combined "burst" layer).
+            this.drawCorePopAndSpokes(ctx, cx, cy, now);
             this.drawRing(ctx, cx, cy, true);
-            this.drawFighter(ctx, cx, cy);
+            this.drawSparkles(ctx, cx, cy, now);
+            this.drawFighter(ctx, cx, cy, now);
             this.drawRing(ctx, cx, cy, false);
-            this.drawBurst(ctx, cx, cy, now);
+            this.drawRingsAndParticles(ctx, cx, cy, now);
+
+            ctx.restore();
+
+            this.drawFlash(ctx, now);
 
             requestAnimationFrame(next => this.frame(next));
         },

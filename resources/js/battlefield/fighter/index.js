@@ -560,28 +560,17 @@ export class Fighter {
     fighter.flairRing = buildRingChars(label).map(({ ch, phase }) => ({
       ch,
       phase,
+      // null so the very first updateFlairRing tick always sets an initial
+      // shadow (see the toggle logic there for why this isn't set here).
+      glowBack: null,
       // addSharpText (not plain scene.add.text): the resolution-doubled
       // render this helper applies is what every other piece of battlefield
       // text uses to stay crisp -- a bare add.text here rendered visibly
       // blurrier than the rest of the scene.
-      //
-      // setShadow here (once, at creation) rather than every tick: Phaser's
-      // Text.setShadow* always re-rasterizes the object's internal canvas
-      // (TextStyle.update() unconditionally calls updateText()), unlike a
-      // position/scale/alpha change, which is a cheap transform update. The
-      // approved design varies the glow's blur/color live with the
-      // spotlight sweep, but doing that every 16ms for ~20 glyphs per
-      // flaired fighter would re-rasterize that many text textures 60
-      // times a second -- a real, avoidable cost. A fixed glow, set once,
-      // keeps the visual (a soft colored halo around every glyph) without
-      // paying for it every frame; the spotlight sweep still reads via the
-      // existing scale/alpha boost.
-      text: this.scene
-        .addSharpText(0, 0, ch, {
-          fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
-          stroke: deep, strokeThickness: 2,
-        })
-        .setShadow(0, 0, fighter.flairColor, 6, false, true),
+      text: this.scene.addSharpText(0, 0, ch, {
+        fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
+        stroke: deep, strokeThickness: 2,
+      }),
       // A short comet trail of fading echo dots behind each glyph -- sells
       // continuous orbit motion rather than a label that merely teleports
       // between frames. Circles (not Text), so trailing them costs only
@@ -601,7 +590,7 @@ export class Fighter {
         fontFamily: 'monospace', fontSize: `${Math.round(fontPx * 0.8)}px`, color: '#f8fafc',
       })
         .setDepth(FLAIR_RING_FRONT_DEPTH)
-        .setShadow(0, 0, fighter.flairColor, 8, false, true),
+        .setShadow(0, 0, fighter.flairColor, 12, false, true),
     }));
 
     fighter.flairAngle = 0;
@@ -649,7 +638,8 @@ export class Fighter {
     const cx = fighter.sprite.x;
     const cy = fighter.sprite.y + headOffY;
 
-    fighter.flairRing.forEach(({ text, phase, trail }) => {
+    fighter.flairRing.forEach(entry => {
+      const { text, phase, trail } = entry;
       const a = fighter.flairAngle + phase;
       const sinA = Math.sin(a);
       const back = sinA < 0;
@@ -658,6 +648,18 @@ export class Fighter {
       text.setDepth(back ? 1 : FLAIR_RING_FRONT_DEPTH);
       text.setScale((back ? 0.7 : 1) * (1 + 0.4 * boost));
       text.setAlpha(back ? 0.55 : 1);
+
+      // Glow only re-set on an ACTUAL front/back transition (roughly twice
+      // per lap), not every tick -- Text.setShadow* unconditionally
+      // re-rasterizes the glyph's texture, so calling it 60 times a second
+      // per glyph would be a real, avoidable cost. This still gives a
+      // strong, visibly-different glow between the near and far arc, just
+      // not one that continuously varies within the front arc itself the
+      // way the (cheap, plain-canvas) preview's does.
+      if (entry.glowBack !== back) {
+        entry.glowBack = back;
+        text.setShadow(0, 0, fighter.flairColor, back ? 6 : 18, false, true);
+      }
 
       // Each echo dot lags the glyph by its own small phase offset and is
       // styled by ITS OWN current side, not the main glyph's -- a dot can
