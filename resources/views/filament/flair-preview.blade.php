@@ -362,8 +362,8 @@
 
             // Core-pop + spokes sit BEHIND the fighter; the shockwave ring
             // and upward particles sit IN FRONT -- matching the approved
-            // artifact's actual draw order exactly (they are not one
-            // combined "burst" layer).
+            // artifact's actual draw order exactly -- they are not one
+            // combined burst layer.
             this.drawCorePopAndSpokes(ctx, cx, cy, now);
             this.drawRing(ctx, cx, cy, true);
             this.drawSparkles(ctx, cx, cy, now);

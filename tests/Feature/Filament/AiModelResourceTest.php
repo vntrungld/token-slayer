@@ -65,6 +65,28 @@ test('saving the animation popup persists the new duration and color', function 
         ->and($row->flair_color)->toBe('#22d3ee');
 });
 
+test('the preview x-data attribute is not truncated by a stray double quote', function () {
+    // The whole Alpine component lives inside a double-quoted x-data
+    // attribute, so ONE literal `"` anywhere in it -- including in a code
+    // comment -- ends the attribute early, and the browser renders the rest
+    // of the component as visible page text. This has now happened twice
+    // (an escaped \" in a canvas font string, then a quoted word in a
+    // comment), and neither broke any other test: the Blade still compiles,
+    // the view still renders, it just silently ships a broken modal.
+    $html = view('filament.flair-preview', [
+        'color' => '#fbbf24',
+        'durationMs' => 6000,
+        'label' => 'FABLE',
+    ])->render();
+
+    $start = strpos($html, 'x-data="') + 8;
+    $attribute = substr($html, $start, strpos($html, '"', $start) - $start);
+
+    // The last statement of the component's own frame loop -- present only
+    // if the attribute survived intact all the way to the end.
+    expect($attribute)->toContain('requestAnimationFrame(next => this.frame(next))');
+});
+
 test('the sync action discovers new models and reports how many', function () {
     $admin = User::factory()->admin()->create();
     Event::factory()->for($admin)->create(['model' => 'claude-sonnet-5']);
