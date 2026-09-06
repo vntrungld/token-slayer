@@ -7,12 +7,13 @@ export const TIMINGS = {
   fighterJoinMs: 300,
   bossSpawnMs: 500,
   bossKilledMs: 400,
-  // Flair badge. The server broadcasts a per-model duration on HitDealt
-  // (admin-configured in ai_models); flairDurationMs here is only the
-  // fallback used when that value is missing (an older cached client, or a
-  // flair with no configured duration), via flair.js's resolveFlairDuration.
-  // 400ms is 2.5 flashes/second -- under the 3/second flashing-content
-  // threshold, which matters on a display the team leaves open all day.
+  // Flair halo. The server broadcasts a per-model duration and color on
+  // HitDealt (admin-configured in ai_models); these two are only the
+  // fallbacks used when a value is missing (an older cached client, or a
+  // flair with no configured duration/color), via flair.js's
+  // resolveFlairDuration and Fighter#applyFlair respectively.
   flairDurationMs: 6000,
-  flairBlinkMs: 400,
+  flairDefaultColor: '#fbbf24',
+  // One lap of the orbit ring at rest (before/after a hit's spin-up boost).
+  flairOrbitPeriodMs: 3200,
 };

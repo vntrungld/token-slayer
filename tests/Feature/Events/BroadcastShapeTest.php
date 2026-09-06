@@ -167,31 +167,33 @@ test('FighterCharacterChanged broadcasts on the battlefield channel with the use
         ]);
 });
 
-test('HitDealt carries a nullable model, flair, and flair duration', function () {
-    // All three must be nullable end to end: HitDealt is also dispatched for
+test('HitDealt carries a nullable model, flair, flair duration, and flair color', function () {
+    // All four must be nullable end to end: HitDealt is also dispatched for
     // cowork/claude-ai Stops, where no model exists at all.
     $user = User::factory()->create();
     $boss = Boss::factory()->create(['number' => 1]);
 
     $plain = (new HitDealt($user, 100, $boss))->broadcastWith();
 
-    expect($plain)->toHaveKeys(['model', 'flair', 'flair_duration_ms'])
+    expect($plain)->toHaveKeys(['model', 'flair', 'flair_duration_ms', 'flair_color'])
         ->and($plain['model'])->toBeNull()
         ->and($plain['flair'])->toBeNull()
-        ->and($plain['flair_duration_ms'])->toBeNull();
+        ->and($plain['flair_duration_ms'])->toBeNull()
+        ->and($plain['flair_color'])->toBeNull();
 
-    $fable = (new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000))->broadcastWith();
+    $fable = (new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000, '#a855f7'))->broadcastWith();
 
     expect($fable['model'])->toBe('claude-fable-5-1')
         ->and($fable['flair'])->toBe('fable')
-        ->and($fable['flair_duration_ms'])->toBe(9000);
+        ->and($fable['flair_duration_ms'])->toBe(9000)
+        ->and($fable['flair_color'])->toBe('#a855f7');
 });
 
 test('HitDealt sends only scalars, per the payload rule', function () {
     $user = User::factory()->create();
     $boss = Boss::factory()->create(['number' => 1]);
 
-    foreach ((new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000))->broadcastWith() as $key => $value) {
+    foreach ((new HitDealt($user, 100, $boss, 'claude-fable-5-1', 'fable', 9000, '#a855f7'))->broadcastWith() as $key => $value) {
         expect(is_scalar($value) || $value === null)->toBeTrue("payload key {$key} is not a scalar");
     }
 });

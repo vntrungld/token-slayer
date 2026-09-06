@@ -21,6 +21,35 @@ test('awards flair with the row duration when a model is enabled', function () {
         ->and($decision->durationMs)->toBe(9000);
 });
 
+test('awards flair with the row admin-configured color when one is set', function () {
+    AiModel::create(['model' => 'claude-fable-5-1', 'flair_enabled' => true, 'flair_color' => '#a855f7']);
+
+    expect($this->resolver->resolve('claude-fable-5-1')->color)->toBe('#a855f7');
+});
+
+test('a stale int-shaped cache entry from before color support cannot crash resolution', function () {
+    // The cached shape changed from array<string,int> (bare duration) to
+    // array<string,array{duration_ms,color}> -- a pre-deploy entry surviving
+    // under the OLD key would make `$row['duration_ms']` index into a plain
+    // int, which throws a TypeError. Seeding the retired key name proves the
+    // resolver reads its own (versioned) key, never that stale shape.
+    Cache::put('battlefield:flair-models', ['claude-fable-5-1' => 9000], 60);
+    AiModel::create(['model' => 'claude-fable-5-1', 'flair_enabled' => true, 'flair_duration_ms' => 5000]);
+
+    $decision = $this->resolver->resolve('claude-fable-5-1');
+
+    expect($decision->flair)->toBe('fable')
+        ->and($decision->durationMs)->toBe(5000);
+});
+
+test('falls back to the default amber when no color has been configured yet', function () {
+    // Existing rows (created by Sync before this feature existed) have no
+    // color -- they must keep rendering the badge, not break or go colorless.
+    AiModel::create(['model' => 'claude-fable-5-1', 'flair_enabled' => true, 'flair_color' => null]);
+
+    expect($this->resolver->resolve('claude-fable-5-1')->color)->toBe(ModelFlairResolver::DEFAULT_COLOR);
+});
+
 test('awards no flair to a model with no row at all', function () {
     expect($this->resolver->resolve('claude-opus-5'))->toBeNull();
 });

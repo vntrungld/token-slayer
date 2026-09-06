@@ -35,6 +35,14 @@ Fighter entry object (lives in `scene.fighters: Map<userId, entry>`):
   waypointMoving,        // boolean — local waypoint animation in progress
   hasCustomPosition,     // boolean — true once fighter has moved (click-to-move or restored from persisted position); relayoutFighters() must not grid-snap these
   rescaleTween,          // active tween or null
+  flairState,            // {flair, expiresAt} from fighter/flair.js, or undefined before the first flair hit
+  flairColor,            // hex string for the active flair's orbit ring/burst, or null when no flair is active
+  flairRing,             // Array<{ch, phase, text: Phaser.GameObjects.Text}> | null — the orbiting name-ring glyphs
+  flairRingTicker,       // Phaser.Time.TimerEvent | null — drives updateFlairRing() every 16ms while flairRing is active
+  flairAngle,            // radians — the ring's current rotation, advanced each tick by updateFlairRing()
+  flairLastBurstAt,      // timestamp (ms) of the last triggering hit — drives the post-hit spin-up (flair.js's spinMultiplier)
+  flairBurstAt,          // timestamp (ms) of the last burstFlair() call — debounces re-bursting within 300ms
+  flairTimer,            // Phaser.Time.TimerEvent | null — fires destroyFlair() when the flair expires
 }
 ```
 

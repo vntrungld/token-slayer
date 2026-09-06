@@ -21,6 +21,8 @@ class HitDealt implements ShouldBroadcastNow
      * @param  ?string  $flair  flair key the model earns, or null for none
      * @param  ?int  $flairDurationMs  how long the flair badge stays up, or
      *                                 null when there is no flair
+     * @param  ?string  $flairColor  admin-configured hex color for the flair
+     *                               effect, or null when there is no flair
      */
     public function __construct(
         public User $user,
@@ -29,6 +31,7 @@ class HitDealt implements ShouldBroadcastNow
         public ?string $model = null,
         public ?string $flair = null,
         public ?int $flairDurationMs = null,
+        public ?string $flairColor = null,
     ) {}
 
     /**
@@ -60,6 +63,7 @@ class HitDealt implements ShouldBroadcastNow
             'model' => $this->model,
             'flair' => $this->flair,
             'flair_duration_ms' => $this->flairDurationMs,
+            'flair_color' => $this->flairColor,
         ];
     }
 }

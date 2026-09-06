@@ -2,19 +2,23 @@
 
 namespace App\Filament\Resources\AiModels;
 
+use App\Enums\ModelFamily;
 use App\Filament\Resources\AiModels\Pages\ListAiModels;
 use App\Models\AiModel;
 use App\Services\Analytics\TokensByModelQuery;
 use App\Services\Analytics\UsageFilters;
 use App\Services\Battlefield\AiModelSyncer;
+use App\Services\Battlefield\ModelFlairResolver;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\ColorPicker;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\PageRegistration;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\ColorColumn;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Table;
 use UnitEnum;
@@ -22,9 +26,10 @@ use UnitEnum;
 /**
  * Admin registry of raw model ids: total tokens/events per model (read from
  * `events` via {@see TokensByModelQuery}), whether a model earns a battlefield
- * flair badge, and for how long — both edited inline in the table, with no
- * separate create/edit page. Rows are only ever added by the Sync header
- * action, never by hand, so a fresh deploy starts every model unreviewed.
+ * flair badge, and its animation (duration + color) — the latter two edited
+ * via the "Edit animation" popup, with no separate create/edit page. Rows are
+ * only ever added by the Sync header action, never by hand, so a fresh
+ * deploy starts every model unreviewed.
  */
 class AiModelResource extends Resource
 {
@@ -61,8 +66,10 @@ class AiModelResource extends Resource
     }
 
     /**
-     * Build the table: read-only totals from {@see TokensByModelQuery}, plus
-     * the two inline-editable columns.
+     * Build the table: read-only totals from {@see TokensByModelQuery}, the
+     * inline "Badge" toggle, read-only duration/color readouts, and the
+     * "Edit animation" row action that opens both for editing with a live
+     * preview.
      *
      * @param  Table  $table  the table being configured
      * @return Table
@@ -85,9 +92,10 @@ class AiModelResource extends Resource
                     ->state(fn (AiModel $record): int => self::tokensByModel()[$record->model]['events'] ?? 0),
                 ToggleColumn::make('flair_enabled')
                     ->label('Badge'),
-                TextInputColumn::make('flair_duration_ms')
-                    ->label('Duration (ms)')
-                    ->type('number'),
+                TextColumn::make('flair_duration_ms')
+                    ->label('Duration'),
+                ColorColumn::make('flair_color')
+                    ->label('Color'),
             ])
             ->defaultSort('model')
             ->headerActions([
@@ -103,7 +111,57 @@ class AiModelResource extends Resource
                             ->success()
                             ->send();
                     }),
+            ])
+            ->recordActions([
+                self::editAnimationAction(),
             ]);
+    }
+
+    /**
+     * Builds the "Edit animation" row action: a popup with the flair color
+     * (Filament's native color picker) and duration, plus a live preview of
+     * the orbiting-halo effect (see resources/views/filament/flair-preview.
+     * blade.php) that updates instantly as the admin adjusts either field —
+     * no save/reload needed to see the result.
+     *
+     * @return Action
+     */
+    private static function editAnimationAction(): Action
+    {
+        return Action::make('edit-animation')
+            ->label('Edit animation')
+            ->icon(Heroicon::OutlinedSparkles)
+            ->authorize('update')
+            ->fillForm(fn (AiModel $record): array => [
+                'flair_duration_ms' => $record->flair_duration_ms,
+                'flair_color' => $record->flair_color,
+            ])
+            ->modalContent(fn (AiModel $record) => view('filament.flair-preview', [
+                'label' => strtoupper(ModelFamily::fromModelId($record->model)?->value ?? $record->model),
+                'color' => $record->flair_color ?? ModelFlairResolver::DEFAULT_COLOR,
+                'durationMs' => $record->flair_duration_ms,
+            ]))
+            ->schema([
+                ColorPicker::make('flair_color')
+                    ->label('Color')
+                    ->hex()
+                    ->extraInputAttributes([
+                        'x-on:input' => 'window.dispatchEvent(new CustomEvent(\'flair-preview-color\', {detail: $event.target.value}))',
+                    ]),
+                TextInput::make('flair_duration_ms')
+                    ->label('Duration (ms)')
+                    ->numeric()
+                    ->minValue(500)
+                    ->required()
+                    ->extraInputAttributes([
+                        'x-on:input' => 'window.dispatchEvent(new CustomEvent(\'flair-preview-duration\', {detail: $event.target.valueAsNumber}))',
+                    ]),
+            ])
+            ->action(function (AiModel $record, array $data): void {
+                $record->update($data);
+
+                Notification::make()->success()->title('Animation updated')->send();
+            });
     }
 
     /**

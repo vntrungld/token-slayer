@@ -36,14 +36,36 @@ test('toggling the badge column persists flair_enabled', function () {
     expect($row->fresh()->flair_enabled)->toBeTrue();
 });
 
-test('editing the duration column persists flair_duration_ms', function () {
+test('the table shows the current color and duration read-only', function () {
+    // Duration/color are edited via the "Edit animation" popup now, not an
+    // inline column -- the table columns are informational only.
     $admin = User::factory()->admin()->create();
-    $row = AiModel::create(['model' => 'claude-opus-5', 'flair_duration_ms' => 6000]);
+    $row = AiModel::create(['model' => 'claude-opus-5', 'flair_duration_ms' => 6000, 'flair_color' => '#a855f7']);
 
     Livewire::actingAs($admin)->test(ListAiModels::class)
-        ->call('updateTableColumnState', 'flair_duration_ms', (string) $row->getKey(), 9000);
+        ->assertTableColumnStateSet('flair_duration_ms', 6000, $row)
+        ->assertTableColumnStateSet('flair_color', '#a855f7', $row);
+});
 
-    expect($row->fresh()->flair_duration_ms)->toBe(9000);
+test('the animation popup prefills the row current duration and color', function () {
+    $admin = User::factory()->admin()->create();
+    $row = AiModel::create(['model' => 'claude-opus-5', 'flair_duration_ms' => 6000, 'flair_color' => '#a855f7']);
+
+    Livewire::actingAs($admin)->test(ListAiModels::class)
+        ->mountTableAction('edit-animation', $row)
+        ->assertTableActionDataSet(['flair_duration_ms' => 6000, 'flair_color' => '#a855f7']);
+});
+
+test('saving the animation popup persists the new duration and color', function () {
+    $admin = User::factory()->admin()->create();
+    $row = AiModel::create(['model' => 'claude-opus-5', 'flair_duration_ms' => 6000, 'flair_color' => '#a855f7']);
+
+    Livewire::actingAs($admin)->test(ListAiModels::class)
+        ->callTableAction('edit-animation', $row, ['flair_duration_ms' => 9000, 'flair_color' => '#22d3ee']);
+
+    $row->refresh();
+    expect($row->flair_duration_ms)->toBe(9000)
+        ->and($row->flair_color)->toBe('#22d3ee');
 });
 
 test('the sync action discovers new models and reports how many', function () {

@@ -11,6 +11,7 @@ use App\Models\AiModel;
 use App\Models\Boss;
 use App\Models\Event;
 use App\Models\User;
+use App\Services\Battlefield\ModelFlairResolver;
 use App\Services\FighterChargingCache;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -717,9 +718,10 @@ test('a Fable turn broadcasts its flair and duration, an Opus turn does not', fu
         ])->assertCreated();
 
     Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
-        fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable' && $e->flairDurationMs === 9000);
+        fn (HitDealt $e): bool => $e->model === 'claude-fable-5-1' && $e->flair === 'fable' && $e->flairDurationMs === 9000
+            && $e->flairColor === ModelFlairResolver::DEFAULT_COLOR);
     Illuminate\Support\Facades\Event::assertDispatched(HitDealt::class,
-        fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null && $e->flairDurationMs === null);
+        fn (HitDealt $e): bool => $e->model === 'claude-opus-5' && $e->flair === null && $e->flairDurationMs === null && $e->flairColor === null);
 });
 
 test('the ingest response tells the client what to be on and whether to hold', function () {

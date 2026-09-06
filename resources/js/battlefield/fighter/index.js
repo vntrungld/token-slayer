@@ -7,7 +7,18 @@ import { planRoute } from '@battlefield/move-geometry.js';
 import { resolveFighterPlacement } from '@battlefield/fighter-placement.js';
 import { driftedPositions } from '@battlefield/resync.js';
 import { loadAvatarTexture, makeFallbackAvatarTexture } from './avatar.js';
-import { clearFlair, createFlairState, isFlairActive, resolveFlairDuration, startFlair } from './flair.js';
+import {
+  buildRingChars,
+  clearFlair,
+  createFlairState,
+  darkenHex,
+  hasFlairChanged,
+  isFlairActive,
+  resolveFlairDuration,
+  spinMultiplier,
+  spotlightBoost,
+  startFlair,
+} from './flair.js';
 
 // Tiny RPG sprite geometry constants — do not change without re-measuring the atlas.
 const SPRITE_CHAR_HEIGHT = 18;
@@ -450,83 +461,166 @@ export class Fighter {
    * @return {void}
    */
   /**
-   * Shows or refreshes a fighter's flair badge for this hit.
+   * Shows or refreshes a fighter's flair halo for this hit: a ring of glyphs
+   * spelling the model's name, orbiting the whole fighter (not just the head,
+   * where it would compete with the activity bubble for the same patch of
+   * screen), plus a one-shot burst.
    *
    * @param {object} fighter
    * @param {?string} flair
    * @param {?number} flairDurationMs  server-broadcast duration for this model,
    *   or null to fall back to the client default (an older cached client, or a
    *   flair with no configured duration)
+   * @param {?string} flairColor  server-broadcast (admin-configured) hex color,
+   *   or null to fall back to the client default (an older cached client)
    * @return {void}
    */
-  applyFlair(fighter, flair, flairDurationMs) {
+  applyFlair(fighter, flair, flairDurationMs, flairColor) {
     const now = this.scene.time.now;
     const durationMs = resolveFlairDuration(flairDurationMs, TIMINGS.flairDurationMs);
+    const previous = { flair: fighter.flairState?.flair ?? null, color: fighter.flairColor ?? null };
     fighter.flairState = startFlair(fighter.flairState ?? createFlairState(), flair, now, durationMs);
 
     if (!isFlairActive(fighter.flairState, now)) {
       return;
     }
 
-    if (!fighter.flairBadge?.scene) {
-      // A child of the fighter container, so it inherits movement and the
-      // damage rest-scale for free. `entry.handle` is world-space and is null
-      // whenever handles are hidden, which would leave the badge unanchored.
-      const head = fighter.head;
-      const y = (head?.y ?? 0) - (head?.displayHeight ?? 28) / 2 - 10;
-      fighter.flairBadge = this.scene.add.text(0, y, fighter.flairState.flair.toUpperCase(), {
-        fontFamily: 'monospace', fontSize: '11px', color: '#fde68a',
-        stroke: '#78350f', strokeThickness: 3,
-        backgroundColor: '#00000066', padding: { x: 5, y: 2 },
-      }).setOrigin(0.5, 1);
-      fighter.sprite?.add?.(fighter.flairBadge);
+    const next = { flair: fighter.flairState.flair, color: flairColor ?? fighter.flairColor ?? TIMINGS.flairDefaultColor };
+    fighter.flairColor = next.color;
+
+    // A different model taking over mid-flight (or the same model saved with
+    // a new admin color) must replace the ring's content, not just leave the
+    // old glyphs spinning under the new state.
+    if (!fighter.flairRing || hasFlairChanged(previous, next)) {
+      this.startFlairRing(fighter);
     }
 
-    fighter.flairBadge.setText(fighter.flairState.flair.toUpperCase()).setAlpha(1).setScale(0);
-    this.scene.tweens.killTweensOf(fighter.flairBadge);
+    if (flair) {
+      // Only a genuinely flair-triggering hit re-bursts and spins the ring
+      // up -- an ordinary hit landing while a prior flair is still counting
+      // down (startFlair leaves that state untouched) must not replay the
+      // full VFX stack on every hit.
+      fighter.flairLastBurstAt = now;
+      this.burstFlair(fighter);
+    }
 
-    // Bounce in on every triggering hit, not just the first -- each Fable hit
-    // is meant to feel like its own small celebration. Back.easeOut gives the
-    // overshoot-then-settle "nảy vào" in one tween, so no manual scale steps.
-    this.scene.tweens.add({
-      targets: fighter.flairBadge,
-      scale: 1,
-      duration: 380,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        if (!fighter.flairBadge?.scene) {
-          return;
-        }
-        // A gentle scale "breathe" once settled, replacing the old hard
-        // alpha 1<->0.15 blink: a scale pulse doesn't swing luminance the way
-        // an alpha flash does, so it reads as calmer at the same cadence.
-        fighter.flairBlink = this.scene.tweens.add({
-          targets: fighter.flairBadge,
-          scale: 1.08,
-          duration: TIMINGS.flairBlinkMs,
-          yoyo: true,
-          repeat: -1,
-        });
-      },
+    fighter.flairTimer?.remove();
+    // Resynced to the state's own expiry rather than re-deriving a fresh
+    // `durationMs` countdown here: a hit with no flair leaves expiresAt
+    // untouched, and rescheduling from `now` on every such hit would
+    // silently extend the visible flair well past its real duration.
+    const remainingMs = Math.max(0, fighter.flairState.expiresAt - now);
+    fighter.flairTimer = this.scene.time.delayedCall(remainingMs, () => this.destroyFlair(fighter));
+  }
+
+  /**
+   * Creates the orbiting ring of glyphs (the model's name, repeated
+   * marquee-style — see flair.js's buildRingChars) and starts the per-tick
+   * updater that keeps it circling the fighter for the rest of the flair's
+   * lifetime. World-space Text objects rather than children of
+   * `fighter.sprite`, matching boss/stun.js's orbiting-star precedent:
+   * a container renders all its children at one depth, but half the ring
+   * must render BEHIND the fighter and half in FRONT of it each frame.
+   *
+   * @param {object} fighter
+   * @return {void}
+   */
+  startFlairRing(fighter) {
+    // Defensive: a ring being rebuilt mid-flight (a different flair took
+    // over) must never leave the old ticker/glyphs orphaned.
+    this.stopFlairRing(fighter);
+
+    const label = fighter.flairState.flair.toUpperCase();
+    const scale = (fighter.displaySize ?? 45) / 45;
+    const fontPx = Math.max(8, Math.round(9 * scale));
+    const deep = darkenHex(fighter.flairColor, 0.65);
+
+    fighter.flairRing = buildRingChars(label).map(({ ch, phase }) => ({
+      ch,
+      phase,
+      text: this.scene
+        .add.text(0, 0, ch, {
+          fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
+          stroke: deep, strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+        .setDepth(1),
+    }));
+    fighter.flairAngle = 0;
+    fighter.flairRingTicker = this.scene.time.addEvent({
+      delay: 16,
+      loop: true,
+      callback: () => this.updateFlairRing(fighter),
     });
+  }
 
-    this.burstFlair(fighter);
-
-    if (fighter.flairTimer) {
-      fighter.flairTimer.remove();
+  /**
+   * Per-tick position/depth/scale update for one fighter's orbit ring.
+   * Advances the shared orbit angle by real elapsed time (not a fixed step),
+   * sped up by {@see spinMultiplier} right after a triggering hit, and
+   * places each glyph on an ellipse around the fighter: the near/front arc
+   * (sinA >= 0) renders full-size in front of the sprite, brightened further
+   * by {@see spotlightBoost} as it sweeps through the closest point; the far
+   * arc renders smaller and dimmer behind it.
+   *
+   * @param {object} fighter
+   * @return {void}
+   */
+  updateFlairRing(fighter) {
+    if (!fighter.sprite?.active || !fighter.flairRing) {
+      this.stopFlairRing(fighter);
+      return;
     }
-    fighter.flairTimer = this.scene.time.delayedCall(durationMs, () => this.destroyFlair(fighter));
+
+    const now = this.scene.time.now;
+    const dt = this.scene.game.loop.delta;
+    const mult = spinMultiplier(now - (fighter.flairLastBurstAt ?? -Infinity));
+    fighter.flairAngle += ((Math.PI * 2) / TIMINGS.flairOrbitPeriodMs) * mult * dt;
+
+    const scale = (fighter.displaySize ?? 45) / 45;
+    const rx = 30 * scale;
+    const ry = 11 * scale;
+    const headOffY = -Math.round(6 * scale);
+    const cx = fighter.sprite.x;
+    const cy = fighter.sprite.y + headOffY;
+
+    fighter.flairRing.forEach(({ text, phase }) => {
+      const a = fighter.flairAngle + phase;
+      const sinA = Math.sin(a);
+      const back = sinA < 0;
+      const boost = back ? 0 : spotlightBoost(a);
+      text.setPosition(cx + Math.cos(a) * rx, cy + sinA * ry);
+      text.setDepth(back ? 1 : 3);
+      text.setScale((back ? 0.7 : 1) * (1 + 0.4 * boost));
+      text.setAlpha(back ? 0.55 : 1);
+    });
+  }
+
+  /**
+   * Tears down one fighter's orbit ring: stops its ticker and destroys every
+   * glyph. Safe to call when no ring is active.
+   *
+   * @param {object} fighter
+   * @return {void}
+   */
+  stopFlairRing(fighter) {
+    fighter.flairRingTicker?.remove();
+    fighter.flairRingTicker = null;
+    fighter.flairRing?.forEach(({ text }) => { if (text.scene) text.destroy(); });
+    fighter.flairRing = null;
   }
 
   /**
    * One-shot "toả ra" burst that plays alongside every triggering flair hit:
-   * two staggered rings expanding from the fighter's feet, plus a handful of
-   * sparkles bursting upward. Purely decorative and self-cleaning — nothing
+   * two staggered shockwave rings and upward sparkles from the fighter's
+   * feet, plus a bright core flash and a starburst of spokes at chest
+   * height — both additively blended so they read as stacking light rather
+   * than a flat color wash. Purely decorative and self-cleaning — nothing
    * here is tracked on `fighter` beyond a `flairBurstAt` timestamp, used only
    * to skip re-bursting when a hit lands while the previous burst (≤850ms) is
    * still animating — realistic hit cadence is seconds apart, so this only
    * guards a pathological run of hits from stacking unbounded Graphics/
-   * particle objects, and never affects the badge itself.
+   * particle objects, and never affects the orbit ring itself.
    *
    * @param {object} fighter
    * @return {void}
@@ -538,6 +632,8 @@ export class Fighter {
     }
     fighter.flairBurstAt = now;
 
+    const color = fighter.flairColor;
+    const colorInt = Phaser.Display.Color.HexStringToColor(color).color;
     const footY = Math.round((fighter.baseSize ?? 48) / 2.2);
     const ringRadius = Math.max(10, Math.round((fighter.baseSize ?? 48) * 0.22));
 
@@ -547,7 +643,7 @@ export class Fighter {
           return;
         }
         const ring = this.scene.add.graphics();
-        ring.lineStyle(2, 0xfbbf24, 0.9);
+        ring.lineStyle(2, colorInt, 0.9);
         ring.strokeCircle(0, 0, ringRadius);
         ring.setPosition(0, footY);
         fighter.sprite.add(ring);
@@ -567,7 +663,7 @@ export class Fighter {
       return;
     }
     const emitter = this.scene.add.particles(fighter.pos.x, fighter.pos.y + footY, TextureKey.SPARK, {
-      tint: { onEmit: () => Phaser.Math.RND.pick([0xfde68a, 0xfbbf24, 0xf59e0b]) },
+      tint: { onEmit: () => colorInt },
       scale: { start: 0.6, end: 0 },
       alpha: { start: 0.9, end: 0 },
       speedX: { min: -30, max: 30 },
@@ -581,12 +677,99 @@ export class Fighter {
     emitter.setDepth(1);
     emitter.explode(8);
     this.scene.time.delayedCall(850, () => { if (emitter.scene) emitter.destroy(); });
+
+    this.burstCorePop(fighter, colorInt, footY);
+    this.burstSpokes(fighter, colorInt, footY);
   }
 
   /**
-   * Removes a fighter's flair badge, its blink tween and its expiry timer.
-   * Called both when the badge expires and when the fighter leaves, so no
-   * tween or delayedCall outlives the object it targets.
+   * A bright white-to-color flash at chest height, additively blended so it
+   * reads as a hot flare rather than a flat colored disc.
+   *
+   * @param {object} fighter
+   * @param {number} colorInt
+   * @param {number} footY
+   * @return {void}
+   */
+  burstCorePop(fighter, colorInt, footY) {
+    const core = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, 5, 0xffffff, 1);
+    core.setBlendMode(Phaser.BlendModes.ADD);
+    core.setDepth(2);
+    this.scene.tweens.add({
+      targets: core,
+      scale: 7,
+      alpha: 0,
+      duration: 260,
+      ease: 'Cubic.easeOut',
+      onUpdate: tween => core.setFillStyle(tween.progress > 0.35 ? colorInt : 0xffffff),
+      onComplete: () => core.destroy(),
+    });
+  }
+
+  /**
+   * A starburst of spokes shooting outward from chest height on trigger —
+   * alternating long/short lengths with a little angular jitter reads as an
+   * irregular explosion rather than a mechanical "sun". Additively blended,
+   * one shared Graphics object redrawn each tween tick rather than N
+   * separate Graphics/Tween pairs per spoke.
+   *
+   * @param {object} fighter
+   * @param {number} colorInt
+   * @param {number} footY
+   * @return {void}
+   */
+  burstSpokes(fighter, colorInt, footY) {
+    const originX = fighter.pos.x;
+    const originY = fighter.pos.y - footY;
+    const N = 12;
+    const spokes = Array.from({ length: N }, (_, i) => {
+      const a = (i / N) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.15, 0.15);
+      const long = i % 3 === 0;
+      return {
+        a,
+        len: long ? Phaser.Math.Between(90, 120) : Phaser.Math.Between(40, 70),
+        width: long ? 3 : 1.5,
+      };
+    });
+
+    const g = this.scene.add.graphics();
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    g.setDepth(2);
+
+    const draw = (growth, fade) => {
+      g.clear();
+      spokes.forEach(({ a, len, width }) => {
+        g.lineStyle(width, colorInt, fade);
+        const l = len * growth;
+        g.lineBetween(originX, originY, originX + Math.cos(a) * l, originY + Math.sin(a) * l);
+      });
+    };
+
+    const state = { growth: 0 };
+    this.scene.tweens.add({
+      targets: state,
+      growth: 1,
+      duration: 150,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => draw(state.growth, 1),
+      onComplete: () => {
+        this.scene.tweens.add({
+          targets: state,
+          growth: 1,
+          duration: 220,
+          ease: 'Sine.easeIn',
+          onUpdate: tween => draw(1, 1 - tween.progress),
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+  }
+
+  /**
+   * Removes a fighter's flair halo — the orbit ring and its ticker, the
+   * expiry timer — and resets its flair state. Called both when the flair
+   * expires and when the fighter leaves, so no tween, ticker or delayedCall
+   * outlives the object it targets.
    *
    * @param {object} fighter
    * @return {void}
@@ -597,13 +780,10 @@ export class Fighter {
     }
     fighter.flairTimer?.remove?.();
     fighter.flairTimer = null;
-    if (fighter.flairBadge) {
-      this.scene.tweens.killTweensOf(fighter.flairBadge);
-      if (fighter.flairBadge.scene) fighter.flairBadge.destroy();
-      fighter.flairBadge = null;
-    }
-    fighter.flairBlink = null;
+    this.stopFlairRing(fighter);
     fighter.flairState = clearFlair();
+    fighter.flairColor = null;
+    fighter.flairLastBurstAt = null;
   }
 
   removeFighter(userId) {
@@ -793,7 +973,7 @@ export class Fighter {
       // would otherwise get its spark burst rendered at a stale position.
       fighter.pos = { x: fighter.sprite.x, y: fighter.sprite.y };
       fighter.waypointMoving = false;
-      this.applyFlair(fighter, payload.flair ?? null, payload.flair_duration_ms ?? null);
+      this.applyFlair(fighter, payload.flair ?? null, payload.flair_duration_ms ?? null, payload.flair_color ?? null);
     }
     const key     = fighter?.ftype?.key ?? null;
     const attacks = fighter?.ftype?.attacks ?? null;

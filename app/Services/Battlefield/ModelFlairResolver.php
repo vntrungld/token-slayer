@@ -25,11 +25,28 @@ class ModelFlairResolver
     private const int CACHE_TTL_SECONDS = 60;
 
     /**
-     * Cache key for the enabled-models snapshot.
+     * Cache key for the enabled-models snapshot. Versioned (:v2) because the
+     * cached shape changed from `array<string,int>` (bare duration) to
+     * `array<string, array{duration_ms:int, color:?string}>` — reusing the
+     * same key would let a stale pre-deploy entry survive past a deploy that
+     * skips `optimize:clear` (e.g. a direct-SSH hotfix), and `resolve()`
+     * indexing `['duration_ms']` into what is actually a bare int throws a
+     * TypeError that fails the whole `/api/events` request until the entry
+     * expires. Bump this suffix again the next time the cached shape changes.
      *
      * @var string
      */
-    private const string CACHE_KEY = 'battlefield:flair-models';
+    private const string CACHE_KEY = 'battlefield:flair-models:v2';
+
+    /**
+     * Flair color for a row that has none configured yet — every row created
+     * by Sync starts with a null color, so this keeps the badge rendering
+     * (in the one color the effect always used before this was configurable)
+     * until an admin picks one.
+     *
+     * @var string
+     */
+    public const string DEFAULT_COLOR = '#fbbf24';
 
     /**
      * The flair decision for a model id, or null when it earns none — because
@@ -46,30 +63,36 @@ class ModelFlairResolver
             return null;
         }
 
-        $durationMs = $this->enabledModels()[$model] ?? null;
+        $row = $this->enabledModels()[$model] ?? null;
 
-        if ($durationMs === null) {
+        if ($row === null) {
             return null;
         }
 
         return new FlairDecision(
             ModelFamily::fromModelId($model)?->value ?? $model,
-            $durationMs,
+            $row['duration_ms'],
+            $row['color'] ?? self::DEFAULT_COLOR,
         );
     }
 
     /**
      * The currently flair-enabled models, keyed by raw id, mapped to their
-     * configured duration.
+     * configured duration and color.
      *
-     * @return array<string, int>
+     * @return array<string, array{duration_ms: int, color: ?string}>
      */
     private function enabledModels(): array
     {
         return Cache::remember(
             self::CACHE_KEY,
             self::CACHE_TTL_SECONDS,
-            fn (): array => AiModel::where('flair_enabled', true)->pluck('flair_duration_ms', 'model')->all(),
+            fn (): array => AiModel::where('flair_enabled', true)
+                ->get(['model', 'flair_duration_ms', 'flair_color'])
+                ->mapWithKeys(fn (AiModel $row): array => [
+                    $row->model => ['duration_ms' => $row->flair_duration_ms, 'color' => $row->flair_color],
+                ])
+                ->all(),
         );
     }
 }

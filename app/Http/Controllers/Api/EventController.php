@@ -124,6 +124,7 @@ class EventController extends Controller
                     $model,
                     $flairDecision?->flair,
                     $flairDecision?->durationMs,
+                    $flairDecision?->color,
                 ));
 
                 if ($activityLabel !== null) {
