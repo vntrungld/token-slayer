@@ -36,15 +36,12 @@ test('toggling the badge column persists flair_enabled', function () {
     expect($row->fresh()->flair_enabled)->toBeTrue();
 });
 
-test('the table shows the current color and duration read-only', function () {
-    // Duration/color are edited via the "Edit animation" popup now, not an
-    // inline column -- the table columns are informational only.
+test('duration and color are not table columns -- only the animation popup edits them', function () {
     $admin = User::factory()->admin()->create();
-    $row = AiModel::create(['model' => 'claude-opus-5', 'flair_duration_ms' => 6000, 'flair_color' => '#a855f7']);
 
     Livewire::actingAs($admin)->test(ListAiModels::class)
-        ->assertTableColumnStateSet('flair_duration_ms', 6000, $row)
-        ->assertTableColumnStateSet('flair_color', '#a855f7', $row);
+        ->assertTableColumnDoesNotExist('flair_duration_ms')
+        ->assertTableColumnDoesNotExist('flair_color');
 });
 
 test('the animation popup prefills the row current duration and color', function () {

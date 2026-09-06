@@ -17,7 +17,6 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Pages\PageRegistration;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\ColorColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Table;
@@ -67,9 +66,9 @@ class AiModelResource extends Resource
 
     /**
      * Build the table: read-only totals from {@see TokensByModelQuery}, the
-     * inline "Badge" toggle, read-only duration/color readouts, and the
-     * "Edit animation" row action that opens both for editing with a live
-     * preview.
+     * inline "Badge" toggle, and the "Edit animation" row action, which is
+     * the only place duration/color are shown or edited — no separate
+     * columns for them, so the table stays uncluttered.
      *
      * @param  Table  $table  the table being configured
      * @return Table
@@ -92,10 +91,6 @@ class AiModelResource extends Resource
                     ->state(fn (AiModel $record): int => self::tokensByModel()[$record->model]['events'] ?? 0),
                 ToggleColumn::make('flair_enabled')
                     ->label('Badge'),
-                TextColumn::make('flair_duration_ms')
-                    ->label('Duration'),
-                ColorColumn::make('flair_color')
-                    ->label('Color'),
             ])
             ->defaultSort('model')
             ->headerActions([
