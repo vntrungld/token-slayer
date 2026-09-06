@@ -137,20 +137,25 @@ class AiModelResource extends Resource
                 'durationMs' => $record->flair_duration_ms,
             ]))
             ->schema([
+                // Stable ids the preview polls every animation frame (see
+                // flair-preview.blade.php) rather than listening for an
+                // 'input' DOM event: the color picker's drag panel is a
+                // separate web component that updates Filament's own Alpine
+                // `state` var directly, without firing a native 'input'
+                // event on this text input -- only typing a hex value by
+                // hand would. Polling `.value` catches both, since Alpine's
+                // x-model keeps that DOM property in sync regardless of
+                // which interaction changed the underlying state.
                 ColorPicker::make('flair_color')
                     ->label('Color')
                     ->hex()
-                    ->extraInputAttributes([
-                        'x-on:input' => 'window.dispatchEvent(new CustomEvent(\'flair-preview-color\', {detail: $event.target.value}))',
-                    ]),
+                    ->extraInputAttributes(['id' => 'flair-preview-color-input']),
                 TextInput::make('flair_duration_ms')
                     ->label('Duration (ms)')
                     ->numeric()
                     ->minValue(500)
                     ->required()
-                    ->extraInputAttributes([
-                        'x-on:input' => 'window.dispatchEvent(new CustomEvent(\'flair-preview-duration\', {detail: $event.target.valueAsNumber}))',
-                    ]),
+                    ->extraInputAttributes(['id' => 'flair-preview-duration-input']),
             ])
             ->action(function (AiModel $record, array $data): void {
                 $record->update($data);

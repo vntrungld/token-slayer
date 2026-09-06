@@ -2,12 +2,21 @@
     Live preview of the battlefield "orbiting halo" flair effect, embedded in
     the AiModelResource "Edit animation" modal (see AiModelResource::editAnimationAction()).
 
-    Updates INSTANTLY as the admin adjusts the color/duration fields below,
-    with no Livewire round-trip: the ColorPicker/TextInput fields dispatch
-    plain window CustomEvents on every input (wired via extraInputAttributes
-    in the Action's ->schema()), and this canvas listens for them directly.
-    This view itself renders once per modal open -- it never depends on the
-    live field state, so it is never replaced by a Livewire re-render.
+    Updates as the admin adjusts the color/duration fields below, with no
+    Livewire round-trip: this canvas polls those fields' rendered `.value`
+    every animation frame (60fps) rather than listening for an 'input' DOM
+    event. That matters specifically for the color picker: its drag panel is
+    a separate web component that updates Filament's own Alpine `state`
+    directly, without ever firing a native 'input' event on the underlying
+    text input -- only typing a hex value by hand does. Polling `.value`
+    catches both interaction styles, since Alpine's x-model keeps that DOM
+    property in sync regardless of which one changed the state. The two
+    fields carry stable ids (`flair-preview-color-input` /
+    `flair-preview-duration-input`, set via extraInputAttributes in the
+    Action's ->schema()) so this view can find them without depending on
+    Filament's own generated element ids. This view itself renders once per
+    modal open -- it never depends on the live field state, so it is never
+    replaced by a Livewire re-render.
 
     The whole Alpine component is defined INLINE in x-data rather than via a
     named function in a separate <script> tag: modalContent() is rendered on
@@ -35,12 +44,29 @@
         bursts: [],
 
         start() {
-            window.addEventListener('flair-preview-color', e => { this.color = e.detail || this.color; });
-            window.addEventListener('flair-preview-duration', e => {
-                if (typeof e.detail === 'number' && e.detail > 0) this.durationMs = e.detail;
-            });
             this.burst();
             requestAnimationFrame(now => this.frame(now));
+        },
+
+        /**
+         * Reads the two form fields' current DOM value every frame (see the
+         * comment at the top of this file for why polling, not an event
+         * listener). A genuine color change also replays the burst, so
+         * picking a new color immediately shows what it looks like in
+         * action rather than only changing the idle ring.
+         */
+        pollInputs() {
+            const colorInput = document.getElementById('flair-preview-color-input');
+            if (colorInput && colorInput.value && colorInput.value !== this.color) {
+                this.color = colorInput.value;
+                this.burst();
+            }
+
+            const durationInput = document.getElementById('flair-preview-duration-input');
+            const durationValue = durationInput ? parseFloat(durationInput.value) : NaN;
+            if (!Number.isNaN(durationValue) && durationValue > 0) {
+                this.durationMs = durationValue;
+            }
         },
 
         burst() {
@@ -228,6 +254,8 @@
         },
 
         frame(now) {
+            this.pollInputs();
+
             if (this.lastFrameAt == null) this.lastFrameAt = now;
             const dt = now - this.lastFrameAt;
             this.lastFrameAt = now;
