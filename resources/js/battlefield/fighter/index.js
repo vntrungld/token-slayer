@@ -49,6 +49,29 @@ const FLAIR_RING_FRONT_DEPTH = 112;
 const FLAIR_TRAIL_LENGTH = 3;
 const FLAIR_TRAIL_GAP = 0.05;
 
+// Everything about the flair is sized as a ratio of the fighter's own
+// displaySize, so it stays in proportion as fighters grow with damage.
+//
+// The ring has to clear the fighter's actual on-screen silhouette, which is
+// much WIDER than it is tall once a character's weapons/props are counted
+// (measured live: displaySize 45 renders a ~90px-wide sprite plus a 40px
+// avatar bubble). The first pass used a radius derived from displaySize
+// alone, which put the ring INSIDE that silhouette -- the name ended up
+// drawn across the character instead of orbiting around it. These ratios
+// match the approved artifact's proportions, where the ring reads as
+// clearly wider than the character it wraps.
+const FLAIR_RING_RX_RATIO = 1.3;
+const FLAIR_RING_RY_RATIO = 0.47;
+const FLAIR_FONT_RATIO = 0.28;
+const FLAIR_RING_CHAR_STEP = 0.26;
+
+// Burst geometry, same reasoning -- these were absolute pixel values, so a
+// damage-grown fighter got a proportionally shrinking burst.
+const FLAIR_SPOKE_LONG_RATIO = 1.65;
+const FLAIR_SPOKE_SHORT_RATIO = 0.85;
+const FLAIR_CORE_RADIUS_RATIO = 0.12;
+const FLAIR_FLASH_RADIUS_RATIO = 0.18;
+
 /** @param {string} handle @param {number} maxChars @return {string} */
 function truncateHandle(handle, maxChars = HANDLE_MAX_CHARS) {
   if (!handle || handle.length <= maxChars) {
@@ -552,12 +575,15 @@ export class Fighter {
     this.stopFlairRing(fighter);
 
     const label = fighter.flairState.flair.toUpperCase();
-    const scale = (fighter.displaySize ?? 45) / 45;
-    const fontPx = Math.max(8, Math.round(9 * scale));
+    const size = fighter.displaySize ?? 45;
+    const fontPx = Math.max(9, Math.round(FLAIR_FONT_RATIO * size));
     const deep = darkenHex(fighter.flairColor, 0.65);
     const colorInt = Phaser.Display.Color.HexStringToColor(fighter.flairColor).color;
 
-    fighter.flairRing = buildRingChars(label).map(({ ch, phase }) => ({
+    // Tighter than flair.js's own default step: at this ring's radius the
+    // default left visible gaps between letters, so the name read as
+    // scattered characters rather than one flowing word.
+    fighter.flairRing = buildRingChars(label, FLAIR_RING_CHAR_STEP).map(({ ch, phase }) => ({
       ch,
       phase,
       // null so the very first updateFlairRing tick always sets an initial
@@ -576,7 +602,7 @@ export class Fighter {
       // between frames. Circles (not Text), so trailing them costs only
       // cheap position/alpha updates, same as the main glyphs.
       trail: Array.from({ length: FLAIR_TRAIL_LENGTH }, () =>
-        this.scene.add.circle(0, 0, 2.4 * scale, colorInt, 1)),
+        this.scene.add.circle(0, 0, Math.max(1.5, 0.055 * size), colorInt, 1)),
     }));
 
     // A handful of independently-twinkling sparkles orbiting slightly wider
@@ -631,10 +657,10 @@ export class Fighter {
     const mult = spinMultiplier(now - (fighter.flairLastBurstAt ?? -Infinity));
     fighter.flairAngle += ((Math.PI * 2) / TIMINGS.flairOrbitPeriodMs) * mult * dt;
 
-    const scale = (fighter.displaySize ?? 45) / 45;
-    const rx = 30 * scale;
-    const ry = 11 * scale;
-    const headOffY = -Math.round(6 * scale);
+    const size = fighter.displaySize ?? 45;
+    const rx = FLAIR_RING_RX_RATIO * size;
+    const ry = FLAIR_RING_RY_RATIO * size;
+    const headOffY = -Math.round(0.15 * size);
     const cx = fighter.sprite.x;
     const cy = fighter.sprite.y + headOffY;
 
@@ -676,8 +702,8 @@ export class Fighter {
       });
     });
 
-    const sparkleRx = rx + 12 * scale;
-    const sparkleRy = ry + 6 * scale;
+    const sparkleRx = rx * 1.22;
+    const sparkleRy = ry * 1.35;
     fighter.flairSparkles?.forEach(s => {
       const a = s.phase + now / (1500 / s.speed);
       const twinkle = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(now / 240 + s.phase * 4));
@@ -799,7 +825,8 @@ export class Fighter {
    * @return {void}
    */
   burstCorePop(fighter, colorInt, footY) {
-    const core = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, 5, 0xffffff, 1);
+    const radius = Math.max(3, FLAIR_CORE_RADIUS_RATIO * (fighter.displaySize ?? 45));
+    const core = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, radius, 0xffffff, 1);
     core.setBlendMode(Phaser.BlendModes.ADD);
     core.setDepth(1); // behind the character, matching the approved artifact design
     this.scene.tweens.add({
@@ -826,7 +853,8 @@ export class Fighter {
    * @return {void}
    */
   burstFlash(fighter, colorInt, footY) {
-    const flash = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, 8, 0xffffff, 0.35);
+    const radius = Math.max(5, FLAIR_FLASH_RADIUS_RATIO * (fighter.displaySize ?? 45));
+    const flash = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, radius, 0xffffff, 0.35);
     flash.setBlendMode(Phaser.BlendModes.ADD);
     flash.setDepth(1); // behind the character, matching the approved artifact design
     this.scene.tweens.add({
@@ -855,13 +883,20 @@ export class Fighter {
   burstSpokes(fighter, colorInt, footY) {
     const originX = fighter.pos.x;
     const originY = fighter.pos.y - footY;
-    const N = 12;
+    const size = fighter.displaySize ?? 45;
+    const longLen = FLAIR_SPOKE_LONG_RATIO * size;
+    const shortLen = FLAIR_SPOKE_SHORT_RATIO * size;
+    // 16, not 12: with 12 spokes, every-third-is-long lands the long ones
+    // exactly on the four cardinal axes, so the burst reads as a mechanical
+    // "+" instead of a starburst. 16 (the approved artifact's count) puts
+    // them on off-axis angles, which is what makes it look irregular.
+    const N = 16;
     const spokes = Array.from({ length: N }, (_, i) => {
       const a = (i / N) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.15, 0.15);
       const long = i % 3 === 0;
       return {
         a,
-        len: long ? Phaser.Math.Between(90, 120) : Phaser.Math.Between(40, 70),
+        len: (long ? longLen : shortLen) * Phaser.Math.FloatBetween(0.85, 1.15),
         width: long ? 3 : 1.5,
       };
     });
