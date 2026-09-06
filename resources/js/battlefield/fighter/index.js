@@ -44,6 +44,11 @@ const HANDLE_MAX_CHARS = 12;
 // render on top of any in-world character effect regardless.
 const FLAIR_RING_FRONT_DEPTH = 112;
 
+// Ring glyph comet trail: how many echo dots per glyph, and the phase gap
+// (radians) between each one and the glyph proper.
+const FLAIR_TRAIL_LENGTH = 3;
+const FLAIR_TRAIL_GAP = 0.05;
+
 /** @param {string} handle @param {number} maxChars @return {string} */
 function truncateHandle(handle, maxChars = HANDLE_MAX_CHARS) {
   if (!handle || handle.length <= maxChars) {
@@ -550,6 +555,7 @@ export class Fighter {
     const scale = (fighter.displaySize ?? 45) / 45;
     const fontPx = Math.max(8, Math.round(9 * scale));
     const deep = darkenHex(fighter.flairColor, 0.65);
+    const colorInt = Phaser.Display.Color.HexStringToColor(fighter.flairColor).color;
 
     fighter.flairRing = buildRingChars(label).map(({ ch, phase }) => ({
       ch,
@@ -558,11 +564,30 @@ export class Fighter {
       // render this helper applies is what every other piece of battlefield
       // text uses to stay crisp -- a bare add.text here rendered visibly
       // blurrier than the rest of the scene.
+      //
+      // setShadow here (once, at creation) rather than every tick: Phaser's
+      // Text.setShadow* always re-rasterizes the object's internal canvas
+      // (TextStyle.update() unconditionally calls updateText()), unlike a
+      // position/scale/alpha change, which is a cheap transform update. The
+      // approved design varies the glow's blur/color live with the
+      // spotlight sweep, but doing that every 16ms for ~20 glyphs per
+      // flaired fighter would re-rasterize that many text textures 60
+      // times a second -- a real, avoidable cost. A fixed glow, set once,
+      // keeps the visual (a soft colored halo around every glyph) without
+      // paying for it every frame; the spotlight sweep still reads via the
+      // existing scale/alpha boost.
       text: this.scene
         .addSharpText(0, 0, ch, {
           fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
           stroke: deep, strokeThickness: 2,
-        }),
+        })
+        .setShadow(0, 0, fighter.flairColor, 6, false, true),
+      // A short comet trail of fading echo dots behind each glyph -- sells
+      // continuous orbit motion rather than a label that merely teleports
+      // between frames. Circles (not Text), so trailing them costs only
+      // cheap position/alpha updates, same as the main glyphs.
+      trail: Array.from({ length: FLAIR_TRAIL_LENGTH }, () =>
+        this.scene.add.circle(0, 0, 2.4 * scale, colorInt, 1)),
     }));
 
     // A handful of independently-twinkling sparkles orbiting slightly wider
@@ -574,7 +599,9 @@ export class Fighter {
       sizeScale: 0.75 + Math.random() * 0.45,
       text: this.scene.addSharpText(0, 0, '✦', {
         fontFamily: 'monospace', fontSize: `${Math.round(fontPx * 0.8)}px`, color: '#f8fafc',
-      }).setDepth(FLAIR_RING_FRONT_DEPTH),
+      })
+        .setDepth(FLAIR_RING_FRONT_DEPTH)
+        .setShadow(0, 0, fighter.flairColor, 8, false, true),
     }));
 
     fighter.flairAngle = 0;
@@ -622,7 +649,7 @@ export class Fighter {
     const cx = fighter.sprite.x;
     const cy = fighter.sprite.y + headOffY;
 
-    fighter.flairRing.forEach(({ text, phase }) => {
+    fighter.flairRing.forEach(({ text, phase, trail }) => {
       const a = fighter.flairAngle + phase;
       const sinA = Math.sin(a);
       const back = sinA < 0;
@@ -631,6 +658,20 @@ export class Fighter {
       text.setDepth(back ? 1 : FLAIR_RING_FRONT_DEPTH);
       text.setScale((back ? 0.7 : 1) * (1 + 0.4 * boost));
       text.setAlpha(back ? 0.55 : 1);
+
+      // Each echo dot lags the glyph by its own small phase offset and is
+      // styled by ITS OWN current side, not the main glyph's -- a dot can
+      // legitimately be a step behind on the other side of the front/back
+      // boundary right as the glyph crosses it.
+      trail.forEach((dot, i) => {
+        const trailAngle = fighter.flairAngle + phase - (i + 1) * FLAIR_TRAIL_GAP;
+        const trailSinA = Math.sin(trailAngle);
+        const trailBack = trailSinA < 0;
+        dot.setPosition(cx + Math.cos(trailAngle) * rx, cy + trailSinA * ry);
+        dot.setDepth(trailBack ? 1 : FLAIR_RING_FRONT_DEPTH);
+        dot.setScale(trailBack ? 0.8 : 1);
+        dot.setAlpha((1 - (i + 1) / (FLAIR_TRAIL_LENGTH + 1)) * (trailBack ? 0.2 : 0.35));
+      });
     });
 
     const sparkleRx = rx + 12 * scale;
@@ -654,7 +695,10 @@ export class Fighter {
   stopFlairRing(fighter) {
     fighter.flairRingTicker?.remove();
     fighter.flairRingTicker = null;
-    fighter.flairRing?.forEach(({ text }) => { if (text.scene) text.destroy(); });
+    fighter.flairRing?.forEach(({ text, trail }) => {
+      if (text.scene) text.destroy();
+      trail.forEach(dot => { if (dot.scene) dot.destroy(); });
+    });
     fighter.flairRing = null;
     fighter.flairSparkles?.forEach(({ text }) => { if (text.scene) text.destroy(); });
     fighter.flairSparkles = null;
@@ -730,6 +774,17 @@ export class Fighter {
 
     this.burstCorePop(fighter, colorInt, footY);
     this.burstSpokes(fighter, colorInt, footY);
+    this.burstFlash(fighter, colorInt, footY);
+
+    // A light shake, matching the existing convention (impact.js,
+    // boss/stun.js both shake the main camera on a hit/stun). The approved
+    // design's screen flash is a whole-viewport effect; on the shared,
+    // multi-fighter battlefield that would fire for every teammate's Fable
+    // hit and flash the WHOLE room's screen each time, which is disruptive
+    // in a way it never was in the single-fighter preview -- kept as a
+    // localized burstFlash() instead (see below), with just a light shake
+    // standing in for the screen-wide "impact" cue.
+    this.scene.cameras.main.shake(160, 0.003);
   }
 
   /**
@@ -753,6 +808,33 @@ export class Fighter {
       ease: 'Cubic.easeOut',
       onUpdate: tween => core.setFillStyle(tween.progress > 0.35 ? colorInt : 0xffffff),
       onComplete: () => core.destroy(),
+    });
+  }
+
+  /**
+   * A big, soft ambient wash around the fighter, standing in for the
+   * approved design's whole-canvas screen flash (see the comment in
+   * burstFlair() for why this is scoped local rather than camera-wide).
+   * Distinct from {@see burstCorePop} by being much larger and dimmer --
+   * a bloom, not a tight flare.
+   *
+   * @param {object} fighter
+   * @param {number} colorInt
+   * @param {number} footY
+   * @return {void}
+   */
+  burstFlash(fighter, colorInt, footY) {
+    const flash = this.scene.add.circle(fighter.pos.x, fighter.pos.y - footY, 8, 0xffffff, 0.35);
+    flash.setBlendMode(Phaser.BlendModes.ADD);
+    flash.setDepth(1); // behind the character, matching the approved artifact design
+    this.scene.tweens.add({
+      targets: flash,
+      scale: 12,
+      alpha: 0,
+      duration: 320,
+      ease: 'Cubic.easeOut',
+      onUpdate: tween => flash.setFillStyle(tween.progress > 0.3 ? colorInt : 0xffffff),
+      onComplete: () => flash.destroy(),
     });
   }
 
