@@ -9,6 +9,7 @@ use App\Services\Analytics\TokensByModelQuery;
 use App\Services\Analytics\UsageFilters;
 use App\Services\Battlefield\AiModelSyncer;
 use App\Services\Battlefield\ModelFlairResolver;
+use App\Support\ModelName;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\ColorPicker;
@@ -79,6 +80,12 @@ class AiModelResource extends Resource
             ->columns([
                 TextColumn::make('model')
                     ->label('Model')
+                    // The readable name leads and the raw id sits under it:
+                    // the id is the registry key and what `events.model` and
+                    // the flair matcher compare against, so it has to stay
+                    // visible and searchable even once it is not the label.
+                    ->formatStateUsing(fn (string $state): string => ModelName::for($state))
+                    ->description(fn (AiModel $record): string => $record->model)
                     ->searchable()
                     ->sortable(),
                 TextColumn::make('tokens')

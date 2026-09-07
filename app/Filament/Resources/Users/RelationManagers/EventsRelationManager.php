@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Users\RelationManagers;
 use App\Enums\ModelFamily;
 use App\Filament\Resources\Users\Pages\ViewUser;
 use App\Models\Event;
+use App\Support\ModelName;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
@@ -73,7 +74,7 @@ class EventsRelationManager extends RelationManager
             return '—';
         }
 
-        return ModelFamily::fromModelId($record->model)?->getLabel() ?? $record->model;
+        return ModelName::for($record->model);
     }
 
     /**

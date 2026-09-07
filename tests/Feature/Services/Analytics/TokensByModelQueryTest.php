@@ -18,8 +18,8 @@ test('totals tokens per model, largest first', function () {
     $rows = (new TokensByModelQuery)->get(UsageFilters::fromPageFilters(['range' => 'all']));
 
     expect($rows)->toBe([
-        ['model' => 'claude-fable-5-1', 'label' => 'Fable', 'tokens' => 629_161, 'events' => 2],
-        ['model' => 'claude-sonnet-5', 'label' => 'Sonnet', 'tokens' => 360_244, 'events' => 1],
+        ['model' => 'claude-fable-5-1', 'label' => 'Fable 5.1', 'tokens' => 629_161, 'events' => 2],
+        ['model' => 'claude-sonnet-5', 'label' => 'Sonnet 5', 'tokens' => 360_244, 'events' => 1],
     ]);
 });
 
@@ -51,7 +51,7 @@ test('honours the shared provider filter', function () {
     );
 
     expect($rows)->toBe([
-        ['model' => 'claude-opus-5', 'label' => 'Opus', 'tokens' => 100, 'events' => 1],
+        ['model' => 'claude-opus-5', 'label' => 'Opus 5', 'tokens' => 100, 'events' => 1],
     ]);
 });
 
@@ -79,7 +79,7 @@ test('filters events down to one model', function () {
     $filters = UsageFilters::fromPageFilters(['range' => 'all', 'model' => 'claude-opus-5']);
 
     expect((new TokensByModelQuery)->get($filters))->toBe([
-        ['model' => 'claude-opus-5', 'label' => 'Opus', 'tokens' => 100, 'events' => 1],
+        ['model' => 'claude-opus-5', 'label' => 'Opus 5', 'tokens' => 100, 'events' => 1],
     ]);
 });
 

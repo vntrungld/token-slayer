@@ -2,13 +2,13 @@
 
 namespace App\Services\Analytics;
 
-use App\Enums\ModelFamily;
 use App\Services\Analytics\Concerns\ScopesEventsByFilters;
+use App\Support\ModelName;
 
 /**
  * Range-wide token totals broken down by the model that produced them.
- * Grouping happens on the raw stored id and the display family is attached
- * afterwards, so a model the enum does not know yet still reports its real
+ * Grouping happens on the raw stored id and the display name is attached
+ * afterwards, so a model this app does not know yet still reports its real
  * total rather than disappearing into an "other" bucket.
  */
 final class TokensByModelQuery
@@ -32,9 +32,7 @@ final class TokensByModelQuery
             ->get()
             ->map(fn ($row): array => [
                 'model' => $row->model ?? UsageFilters::UNKNOWN_MODEL,
-                'label' => $row->model === null
-                    ? 'Unknown'
-                    : (ModelFamily::fromModelId($row->model)?->getLabel() ?? $row->model),
+                'label' => ModelName::for($row->model),
                 'tokens' => (int) $row->tokens,
                 'events' => (int) $row->events,
             ])
