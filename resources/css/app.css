@@ -117,3 +117,14 @@
         display: block;
     }
 }
+
+/* The model-flair orbit ring's face (see resources/js/battlefield/fighter/
+   flair-font.js for why it is self-hosted at a fixed path instead of going
+   through the bunny() helper in vite.config.js that Instrument Sans uses). */
+@font-face {
+    font-family: 'Chakra Petch';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('/fonts/chakra-petch-700-latin.woff2') format('woff2');
+}

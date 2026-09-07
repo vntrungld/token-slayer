@@ -103,7 +103,7 @@ Some managers are a single file; others are a thin barrel (`x.js` → `export * 
 | `projectile.js` | `class Projectile` — all projectile types (slash, blast, shuriken, arrow, blade) |
 | `impact.js` | `class Impact` — damage popup, hit flash effects |
 | `boss.js` → `boss/` | `class Boss` (`index.js`) — boss patrol, react animations, HP bar; `dreadknight.js` (abyssal-dreadknight deterministic turn-based patrol); `stun.js` (visual-only stun effect) |
-| `fighter.js` → `fighter/` | `class Fighter` (`index.js`) — fighter lifecycle; `avatar.js` (avatar texture loading + fallback generation) |
+| `fighter.js` → `fighter/` | `class Fighter` (`index.js`) — fighter lifecycle; `avatar.js` (avatar texture loading + fallback generation); `flair.js` (pure flair state/ring-layout helpers); `flair-font.js` (the model ring's self-hosted webfont + its load gate — the only battlefield text not set in the browser default `monospace`) |
 
 ## Test Files
 | Test | What it covers |

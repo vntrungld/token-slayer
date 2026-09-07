@@ -37,6 +37,20 @@
     re-rasterizes the glyph's texture on every call, which is why the real
     game sets it once instead -- see fighter/index.js's startFlairRing).
 --}}
+<style>
+    /* The Filament panel does not load this app's Vite CSS bundle, so the
+       flair ring's face has to be declared again here -- same self-hosted
+       file as resources/css/app.css, so the preview and the battlefield can
+       never drift onto different fonts. */
+    @font-face {
+        font-family: 'Chakra Petch';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/chakra-petch-700-latin.woff2') format('woff2');
+    }
+</style>
+
 <div
     x-data="{
         color: @js($color) || '#fbbf24',
@@ -54,7 +68,13 @@
 
         start() {
             this.burst();
-            requestAnimationFrame(now => this.frame(now));
+            const go = () => requestAnimationFrame(now => this.frame(now));
+            const face = document.fonts && document.fonts.load;
+            if (face) {
+                document.fonts.load('700 9px Chakra Petch').then(go, go);
+            } else {
+                go();
+            }
         },
 
         /**
@@ -172,7 +192,7 @@
             ctx.translate(x, y);
             ctx.scale(scale, scale);
             ctx.globalAlpha = alpha;
-            ctx.font = '9px monospace';
+            ctx.font = '700 9px Chakra Petch, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.shadowColor = glow ? '#ffffff' : this.color;

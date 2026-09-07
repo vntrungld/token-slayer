@@ -7,6 +7,7 @@ import { planRoute } from '@battlefield/move-geometry.js';
 import { resolveFighterPlacement } from '@battlefield/fighter-placement.js';
 import { driftedPositions } from '@battlefield/resync.js';
 import { loadAvatarTexture, makeFallbackAvatarTexture } from './avatar.js';
+import { FLAIR_FONT_FAMILY, FLAIR_FONT_WEIGHT, ensureFlairFont, isFlairFontReady } from './flair-font.js';
 import {
   buildRingChars,
   clearFlair,
@@ -65,10 +66,28 @@ const FLAIR_RING_RY_RATIO = 0.47;
 const FLAIR_FONT_RATIO = 0.28;
 const FLAIR_RING_CHAR_STEP = 0.26;
 
+// Glow radius (px) for a ring glyph on the near and far arc. These are also
+// the padding reserved around every glowing Text in the flair: a Phaser Text
+// canvas is sized to its glyph bounds and a shadow blur renders OUTSIDE those
+// bounds, so without padding the halo is clipped away entirely -- the style
+// reads blur 18 while the screen shows none (verified live: a 13px glyph had
+// 10x17 bounds in a 20x34 texture, leaving nowhere for the blur to land).
+// That clipping is why the soft ambient light the approved design has around
+// the character was missing here while the preview showed it.
+const FLAIR_GLOW_BLUR_FRONT = 18;
+const FLAIR_GLOW_BLUR_BACK = 6;
+const FLAIR_SPARKLE_GLOW_BLUR = 12;
+
 // Burst geometry, same reasoning -- these were absolute pixel values, so a
 // damage-grown fighter got a proportionally shrinking burst.
 const FLAIR_SPOKE_LONG_RATIO = 1.65;
 const FLAIR_SPOKE_SHORT_RATIO = 0.85;
+// Where each ray starts, measured out from the burst origin -- the design
+// leaves a small gap so the rays radiate from around the core flare instead
+// of all converging into one solid blob at its centre.
+const FLAIR_SPOKE_INNER_RATIO = 0.13;
+const FLAIR_SPOKE_COUNT = 12;
+const FLAIR_SPOKE_LIFE_MS = 420;
 const FLAIR_CORE_RADIUS_RATIO = 0.12;
 const FLAIR_FLASH_RADIUS_RATIO = 0.18;
 
@@ -97,6 +116,10 @@ export class Fighter {
    */
   constructor(scene) {
     this.scene = scene;
+    // Warm the flair webfont at scene boot rather than on the first flair
+    // hit, so the ring is almost always built with the face already in hand
+    // and startFlairRing's re-apply pass stays a fallback, not the norm.
+    ensureFlairFont();
   }
 
   /**
@@ -593,9 +616,17 @@ export class Fighter {
       // render this helper applies is what every other piece of battlefield
       // text uses to stay crisp -- a bare add.text here rendered visibly
       // blurrier than the rest of the scene.
+      // padding is what makes the glow visible at all: a Text's canvas is
+      // sized to its glyph bounds, and a shadow blur renders OUTSIDE those
+      // bounds, so without room reserved for it the halo is clipped away
+      // entirely -- the style reads blur 18 while the screen shows none
+      // (verified live: a 13px glyph had a 10x17 bounds and a 20x34
+      // texture, leaving nowhere for an 18px blur to land).
       text: this.scene.addSharpText(0, 0, ch, {
-        fontFamily: 'monospace', fontSize: `${fontPx}px`, color: fighter.flairColor,
+        fontFamily: FLAIR_FONT_FAMILY, fontStyle: FLAIR_FONT_WEIGHT,
+        fontSize: `${fontPx}px`, color: fighter.flairColor,
         stroke: deep, strokeThickness: 2,
+        padding: { x: FLAIR_GLOW_BLUR_FRONT, y: FLAIR_GLOW_BLUR_FRONT },
       }),
       // A short comet trail of fading echo dots behind each glyph -- sells
       // continuous orbit motion rather than a label that merely teleports
@@ -614,9 +645,10 @@ export class Fighter {
       sizeScale: 0.75 + Math.random() * 0.45,
       text: this.scene.addSharpText(0, 0, '✦', {
         fontFamily: 'monospace', fontSize: `${Math.round(fontPx * 0.8)}px`, color: '#f8fafc',
+        padding: { x: FLAIR_SPARKLE_GLOW_BLUR, y: FLAIR_SPARKLE_GLOW_BLUR },
       })
         .setDepth(FLAIR_RING_FRONT_DEPTH)
-        .setShadow(0, 0, fighter.flairColor, 12, false, true),
+        .setShadow(0, 0, fighter.flairColor, FLAIR_SPARKLE_GLOW_BLUR, false, true),
     }));
 
     fighter.flairAngle = 0;
@@ -625,6 +657,22 @@ export class Fighter {
       loop: true,
       callback: () => this.updateFlairRing(fighter),
     });
+
+    // A Phaser Text bakes its glyphs the moment it is created, so a ring
+    // built during the very first page load -- before the webfont has
+    // finished downloading -- would render in the monospace fallback for its
+    // whole life. Re-applying the family once the face lands forces the
+    // re-rasterize; the identity check makes sure a ring that has since been
+    // replaced or torn down is left alone.
+    if (!isFlairFontReady()) {
+      const built = fighter.flairRing;
+      ensureFlairFont().then(() => {
+        if (fighter.flairRing !== built) {
+          return;
+        }
+        built.forEach(({ text }) => text.active && text.setFontFamily(FLAIR_FONT_FAMILY));
+      });
+    }
   }
 
   /**
@@ -684,7 +732,7 @@ export class Fighter {
       // way the (cheap, plain-canvas) preview's does.
       if (entry.glowBack !== back) {
         entry.glowBack = back;
-        text.setShadow(0, 0, fighter.flairColor, back ? 6 : 18, false, true);
+        text.setShadow(0, 0, fighter.flairColor, back ? FLAIR_GLOW_BLUR_BACK : FLAIR_GLOW_BLUR_FRONT, false, true);
       }
 
       // Each echo dot lags the glyph by its own small phase offset and is
@@ -886,18 +934,15 @@ export class Fighter {
     const size = fighter.displaySize ?? 45;
     const longLen = FLAIR_SPOKE_LONG_RATIO * size;
     const shortLen = FLAIR_SPOKE_SHORT_RATIO * size;
-    // 16, not 12: with 12 spokes, every-third-is-long lands the long ones
-    // exactly on the four cardinal axes, so the burst reads as a mechanical
-    // "+" instead of a starburst. 16 (the approved artifact's count) puts
-    // them on off-axis angles, which is what makes it look irregular.
-    const N = 16;
-    const spokes = Array.from({ length: N }, (_, i) => {
-      const a = (i / N) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.15, 0.15);
+    const inner = FLAIR_SPOKE_INNER_RATIO * size;
+    const spokes = Array.from({ length: FLAIR_SPOKE_COUNT }, (_, i) => {
+      const a = (i / FLAIR_SPOKE_COUNT) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.11, 0.11);
       const long = i % 3 === 0;
       return {
-        a,
+        cos: Math.cos(a),
+        sin: Math.sin(a),
         len: (long ? longLen : shortLen) * Phaser.Math.FloatBetween(0.85, 1.15),
-        width: long ? 3 : 1.5,
+        halfWidth: long ? 2.2 : 1.1,
       };
     });
 
@@ -907,30 +952,50 @@ export class Fighter {
 
     const draw = (growth, fade) => {
       g.clear();
-      spokes.forEach(({ a, len, width }) => {
-        g.lineStyle(width, colorInt, fade);
-        const l = len * growth;
-        g.lineBetween(originX, originY, originX + Math.cos(a) * l, originY + Math.sin(a) * l);
+      spokes.forEach(({ cos, sin, len, halfWidth }) => {
+        const tipLen = Math.max(inner + 1, len * growth);
+        const baseX = originX + cos * inner;
+        const baseY = originY + sin * inner;
+        // A filled triangle, not a stroked line: the design's rays taper to
+        // a point and fade out along their own length via a canvas linear
+        // gradient, which Phaser's Graphics has no equivalent for. Geometry
+        // carries the taper instead -- a wide base collapsing to a single
+        // tip vertex -- and a shorter, brighter white triangle stacked over
+        // the same base reproduces the white-hot -> family-color falloff
+        // additively. A uniform-width lineBetween read as a blunt spoke.
+        const perpX = -sin * halfWidth;
+        const perpY = cos * halfWidth;
+        g.fillStyle(colorInt, fade);
+        g.fillTriangle(
+          baseX + perpX, baseY + perpY,
+          baseX - perpX, baseY - perpY,
+          originX + cos * tipLen, originY + sin * tipLen,
+        );
+        g.fillStyle(0xffffff, fade * 0.85);
+        g.fillTriangle(
+          baseX + perpX * 0.7, baseY + perpY * 0.7,
+          baseX - perpX * 0.7, baseY - perpY * 0.7,
+          originX + cos * (inner + (tipLen - inner) * 0.32),
+          originY + sin * (inner + (tipLen - inner) * 0.32),
+        );
       });
     };
 
-    const state = { growth: 0 };
+    // One tween over the whole life instead of grow-then-fade back to back:
+    // the design holds the rays at full brightness for a beat after they
+    // finish extending, and only then fades them.
+    const state = { p: 0 };
     this.scene.tweens.add({
       targets: state,
-      growth: 1,
-      duration: 150,
-      ease: 'Cubic.easeOut',
-      onUpdate: () => draw(state.growth, 1),
-      onComplete: () => {
-        this.scene.tweens.add({
-          targets: state,
-          growth: 1,
-          duration: 220,
-          ease: 'Sine.easeIn',
-          onUpdate: tween => draw(1, 1 - tween.progress),
-          onComplete: () => g.destroy(),
-        });
+      p: 1,
+      duration: FLAIR_SPOKE_LIFE_MS,
+      ease: 'Linear',
+      onUpdate: () => {
+        const growth = Math.min(1, state.p / 0.35);
+        const fade = state.p < 0.55 ? 1 : Math.max(0, 1 - (state.p - 0.55) / 0.45);
+        draw(Phaser.Math.Easing.Cubic.Out(growth), fade);
       },
+      onComplete: () => g.destroy(),
     });
   }
 
