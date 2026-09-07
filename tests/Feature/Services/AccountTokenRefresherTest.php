@@ -54,6 +54,35 @@ test('a refresh persists refresh_token_expires_in onto oauth_refresh_expires_at'
     expect($account->fresh()->oauth_refresh_expires_at)->not->toBeNull();
 });
 
+test('a successful refresh stamps last_refreshed_at', function () {
+    // This is the signal the Expiring page reads to tell a healthy grant from
+    // one whose refresh has quietly started failing, so it has to move on
+    // every real rotation.
+    fakeAnthropic();
+    $account = Account::factory()->connected()->create([
+        'oauth_expires_at' => now()->addMinutes(30),
+        'last_refreshed_at' => now()->subDays(10),
+    ]);
+
+    expect($this->refresher->ensureFreshToken($account))->toBeTrue()
+        ->and($account->fresh()->last_refreshed_at->diffInMinutes(now()))->toBeLessThan(1);
+});
+
+test('a failed refresh leaves last_refreshed_at where it was', function () {
+    // Stamping on failure would make a permanently broken account look
+    // permanently healthy — the staleness rule would never fire for the one
+    // case it exists to catch.
+    $stalledSince = now()->subDays(10);
+    fakeAnthropic(['token' => Http::response(['error' => 'invalid_grant'], 400)]);
+    $account = Account::factory()->connected()->create([
+        'oauth_expires_at' => now()->addMinutes(30),
+        'last_refreshed_at' => $stalledSince,
+    ]);
+
+    expect($this->refresher->ensureFreshToken($account))->toBeFalse()
+        ->and($account->fresh()->last_refreshed_at->timestamp)->toBe($stalledSince->timestamp);
+});
+
 test('an invalid_grant refresh flags NeedsReauth, dispatches the alert, and reports not fresh', function () {
     Event::fake([AccountTokenRejected::class]);
     fakeAnthropic(['token' => Http::response('', 400)]);

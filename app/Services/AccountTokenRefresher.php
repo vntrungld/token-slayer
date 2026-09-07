@@ -116,6 +116,10 @@ class AccountTokenRefresher
         if (isset($token['refresh_token_expires_in'])) {
             $account->oauth_refresh_expires_at = now()->addSeconds($token['refresh_token_expires_in']);
         }
+        // Stamped only on the success path: this is the "the grant still
+        // rotates" signal, so a failed attempt must leave it where it was or
+        // a permanently failing account would look permanently healthy.
+        $account->last_refreshed_at = now();
         $account->save();
 
         return true;

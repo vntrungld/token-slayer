@@ -6,7 +6,7 @@ use App\Enums\AccountPlan;
 use App\Enums\AccountStatus;
 use App\Enums\CodexPlan;
 use App\Enums\Provider;
-use App\Exceptions\AccountConnectException;
+use App\Filament\Actions\ClaudeReconnectModal;
 use App\Filament\Resources\Accounts\Pages\CreateAccount;
 use App\Filament\Resources\Accounts\Pages\EditAccount;
 use App\Filament\Resources\Accounts\Pages\ListAccounts;
@@ -28,7 +28,6 @@ use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
-use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
@@ -250,48 +249,9 @@ class AccountResource extends Resource
             ->modalHeading('Re-connect Claude account')
             ->modalDescription('Open the authorize URL, approve access, then paste the code back here. You must authorize the same account this row represents.')
             ->modalSubmitActionLabel('Complete connect')
-            ->fillForm(function (): array {
-                $started = app(AccountConnectService::class)->start();
-
-                return [
-                    'authorize_url' => $started['url'],
-                    'state' => $started['state'],
-                    'code' => '',
-                ];
-            })
-            ->schema([
-                TextInput::make('authorize_url')
-                    ->label('Authorize URL')
-                    ->readOnly()
-                    ->copyable(),
-                Hidden::make('state'),
-                TextInput::make('code')
-                    ->label('Paste the code here')
-                    ->required(),
-            ])
-            ->action(function (array $data, Account $record): void {
-                try {
-                    app(AccountConnectService::class)->resolve($data['state'], $data['code'], $record);
-                } catch (AccountConnectException $exception) {
-                    Notification::make()
-                        ->danger()
-                        ->title('Connect failed')
-                        ->body(match ($exception->reason) {
-                            'connect_identity_mismatch' => $exception->getMessage(),
-                            'connect_state_expired' => 'This connect link expired or was already used. Click Connect to start again.',
-                            'connect_no_identity' => 'Could not read an email from the authorized Claude account.',
-                            default => 'Something went wrong completing the connect.',
-                        })
-                        ->send();
-
-                    return;
-                }
-
-                Notification::make()
-                    ->success()
-                    ->title('Account re-connected')
-                    ->send();
-            });
+            ->fillForm(fn (): array => ClaudeReconnectModal::start())
+            ->schema(ClaudeReconnectModal::schema())
+            ->action(fn (array $data, Account $record) => ClaudeReconnectModal::complete($record, $data, 'Connect'));
     }
 
     /**

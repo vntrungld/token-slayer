@@ -460,6 +460,10 @@ class AccountConnectService implements AccountDisconnecterContract
         $account->oauth_refresh_token = $refreshToken;
         $account->oauth_expires_at = now()->addSeconds($expiresIn);
         $account->oauth_refresh_expires_at = $refreshExpiresIn !== null ? now()->addSeconds($refreshExpiresIn) : $account->oauth_refresh_expires_at;
+        // A fresh grant is a rotation like any other, so the staleness clock
+        // starts here too — otherwise a just-reconnected account would read as
+        // never having refreshed.
+        $account->last_refreshed_at = now();
         $account->status = AccountStatus::Active;
         $account->probe_error = null;
     }

@@ -389,9 +389,31 @@ class Account extends Model
     }
 
     /**
-     * Proxies to `claudeCredential.oauth_refresh_expires_at` — a new
-     * column with no current writer server-side; the Phase 3 visibility
-     * work adds the code that populates it.
+     * Proxies to `claudeCredential.last_refreshed_at` — when this Claude
+     * grant last rotated successfully.
+     *
+     * Distinct from `lastProbedAt`, which every probe cycle stamps whether or
+     * not a token was exchanged. Only a successful refresh moves this one, so
+     * it is the signal that separates a healthy grant from one whose refresh
+     * has quietly started failing without flipping the status.
+     *
+     * @return Attribute<?Carbon, mixed>
+     */
+    protected function lastRefreshedAt(): Attribute
+    {
+        return Attribute::make(
+            get: fn (): ?Carbon => $this->claudeCredential?->last_refreshed_at,
+            set: function (mixed $value): array {
+                $this->claudeCredentialForWrite()->last_refreshed_at = $value;
+
+                return [];
+            },
+        );
+    }
+
+    /**
+     * Proxies to `claudeCredential.oauth_refresh_expires_at`, populated from
+     * the `refresh_token_expires_in` every successful token exchange returns.
      *
      * @return Attribute<?Carbon, mixed>
      */

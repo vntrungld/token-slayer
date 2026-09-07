@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Concerns\RepairsAccounts;
 use App\Services\Attribution\ExpiringAccountsQuery;
 use BackedEnum;
 use Filament\Pages\Page;
@@ -18,6 +19,8 @@ use UnitEnum;
  */
 class ExpiringAccounts extends Page
 {
+    use RepairsAccounts;
+
     /**
      * Only users granted the usage-analytics permission may open this page.
      * super_admin passes via filament-shield's Gate::before bypass.

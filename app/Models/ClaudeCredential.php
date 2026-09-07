@@ -57,6 +57,7 @@ class ClaudeCredential extends Model implements CredentialsProvider
             'oauth_refresh_token' => 'encrypted',
             'oauth_expires_at' => 'datetime',
             'oauth_refresh_expires_at' => 'datetime',
+            'last_refreshed_at' => 'datetime',
             'last_probed_at' => 'datetime',
         ];
     }
